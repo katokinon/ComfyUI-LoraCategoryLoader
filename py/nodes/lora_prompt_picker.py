@@ -45,6 +45,11 @@ class LoraPromptPicker:
                     "STRING",
                     {"forceInput": True, "tooltip": "接到「LoRA分类加载」的 LORA_NAMES 输出"},
                 ),
+            },
+            # selection 放 optional：它只是状态容器，有 default；万一某个老工作流里
+            # 没带上这个值（比如节点定义变过），也不该因此整张图提交不了。
+            # 注意顺序：它必须排在别的可选 widget 前面，widget 的先后才不会变。
+            "optional": {
                 "selection": (
                     "STRING",
                     {
@@ -53,8 +58,6 @@ class LoraPromptPicker:
                         "tooltip": "由节点界面上的复选框自动写入，一般不用手改",
                     },
                 ),
-            },
-            "optional": {
                 "separator": (_SEPARATOR_OPTIONS, {"default": "换行"}),
                 "prefix": (
                     "STRING",

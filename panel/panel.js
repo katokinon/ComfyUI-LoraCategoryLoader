@@ -131,9 +131,10 @@ async function load() {
 
 function syncCatOptions() {
   const sel = $("#bulkCat");
-  sel.innerHTML = STATE.categories
-    .map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`)
-    .join("");
+  // 第一个是占位项：批量条默认不选中任何类别，误点「＋ 加标签 / － 去标签」也不会悄悄改数据
+  sel.innerHTML =
+    `<option value="">— 选择类别 —</option>` +
+    STATE.categories.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("");
 }
 
 /* ------------------------------------------------------------------ */
@@ -243,7 +244,7 @@ function openCategoryDialog(cat) {
   const isNew = !cat;
   const body = el("div");
   body.innerHTML = `
-    <div class="field"><span>类别名称</span><input type="text" id="catName" value="${esc(cat?.name || "")}" placeholder="例如：角色 / 画风 / 姿势"></div>
+    <div class="field"><span>类别名称</span><input type="text" id="catName" value="${esc(cat?.name || "")}" placeholder="例如：角色 / 画风 / 题材"></div>
     <div class="field"><span>选择模式</span>
       <select id="catMode">
         <option value="exclusive">单选 · 同类互斥（当前版本节点即为此行为）</option>
@@ -731,7 +732,11 @@ $("#btnRefreshNodes").onclick = refreshNodes;
 
 async function bulkTag(mode) {
   const cid = $("#bulkCat").value;
-  if (!cid || !picked.size) return;
+  if (!picked.size) return;
+  if (!cid) {
+    toast("先在下拉里选一个类别", true);
+    return;
+  }
   const body = { names: [...picked] };
   if (mode === "add") body.add_category = cid;
   else if (mode === "remove") body.remove_category = cid;

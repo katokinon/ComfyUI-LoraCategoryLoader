@@ -2,8 +2,16 @@
 
     python tests/selftest.py
 
-覆盖：扫描索引、LoRA Manager 预览图读取、类别/预设持久化、
-节点 A 的动态下拉生成、节点 B 的提示词拼接顺序与分隔符。
+纯标准库，装好 Python 就能跑，不需要 ComfyUI。
+
+覆盖：
+  - 扫描索引（子目录、去扩展名的显示名）
+  - 预览图：LoRA Manager sidecar 读取、上传 / 删除、改名后跟随
+  - 类别 / 预设持久化，schema v1→v2→v3 迁移
+  - 多类别标签（tag_lora 追加 / 摘除、非法 id 过滤）
+  - LoRA 挪进子文件夹后的「按文件名唯一匹配」自动认领
+  - 节点 A：动态下拉生成、状态解析（v1 cats / v2 on 两种格式）、加载顺序
+  - 节点 B：提示词拼接顺序、分隔符、prefix/suffix 分段、去重
 """
 
 from __future__ import annotations
@@ -232,26 +240,53 @@ def main() -> int:
     optional = inputs["optional"]
     check(
         "MODEL / CLIP 是可选输入（不接线也能跑，只输出名称与语法）",
-        "model" in optional and "clip" in optional and "model" not in required and "clip" not in required,
+        "model" in optional and "clip" in optional,
     )
-    widget_names = [k for k in required if k.startswith(WIDGET_PREFIX)]
+    check(
+        "一个 required 都不留（类别增删后旧工作流缺值也不该提交失败）",
+        required == {} or len(required) == 0,
+        str(list(required)),
+    )
+    widget_names = [k for k in optional if k.startswith(WIDGET_PREFIX)]
     check("每个类别生成一个下拉", len(widget_names) == 3, ", ".join(widget_names))
-    char_widget = required[WIDGET_PREFIX + cat_char["id"]][0]
+    check(
+        "下拉与 selection、global_strength 都归到 optional",
+        "selection" in optional and "global_strength" in optional,
+    )
+    check(
+        "widget 顺序没变（model/clip -> 各下拉 -> selection -> global_strength）",
+        list(optional.keys())
+        == ["model", "clip"] + [WIDGET_PREFIX + DEFAULT_CATEGORY_ID, WIDGET_PREFIX + cat_char["id"], WIDGET_PREFIX + cat_style["id"]] + ["selection", "global_strength"],
+        str(list(optional.keys())),
+    )
+    char_widget = optional[WIDGET_PREFIX + cat_char["id"]][0]
     check("下拉第一项是「不使用」", char_widget[0] == NONE, char_widget[0])
     check(
         "下拉里是该类别名下的 LoRA（单选=同类互斥）",
         sorted(char_widget[1:]) == ["角色/miku_v3.safetensors", "角色/rem_v2.safetensors"],
         str(char_widget[1:]),
     )
-    style_widget = required[WIDGET_PREFIX + cat_style["id"]][0]
+    style_widget = optional[WIDGET_PREFIX + cat_style["id"]][0]
     check("另一个类别只列出自己的 LoRA", style_widget[1:] == ["画风/film.safetensors"], str(style_widget[1:]))
-    default_widget = required[WIDGET_PREFIX + DEFAULT_CATEGORY_ID][0]
+    default_widget = optional[WIDGET_PREFIX + DEFAULT_CATEGORY_ID][0]
     check(
         "未打标签的 LoRA 落在「未分类」下拉里",
         default_widget[1:] == ["plain.safetensors"],
         str(default_widget[1:]),
     )
     check("下拉顺序跟随类别顺序", widget_names[0] == WIDGET_PREFIX + DEFAULT_CATEGORY_ID)
+
+    picker_inputs = LoraPromptPicker.INPUT_TYPES()
+    check(
+        "节点 B 只有 lora_names 是 required（其余都有默认值）",
+        list(picker_inputs["required"].keys()) == ["lora_names"],
+        str(list(picker_inputs["required"].keys())),
+    )
+    check(
+        "节点 B 的 selection 也是 optional，且排在可选 widget 最前（顺序不变）",
+        list(picker_inputs["optional"].keys())[0] == "selection",
+        str(list(picker_inputs["optional"].keys())),
+    )
 
     print("\n=== 5. 节点 B 的提示词拼接 ===")
     picker = LoraPromptPicker()

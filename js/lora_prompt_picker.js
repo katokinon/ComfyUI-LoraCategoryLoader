@@ -91,12 +91,27 @@ export function repairWidgetValues(node, info) {
 
 const SEPARATOR_OPTIONS = ["换行", "双换行", "逗号+空格", "空格"];
 
+function widgetOptions(w) {
+  let v = w && w.options ? w.options.values : null;
+  try {
+    if (typeof v === "function") v = v(w);
+  } catch (err) {
+    return null;
+  }
+  return Array.isArray(v) ? v : null;
+}
+
 /**
- * 兜底：把「只可能是枚举 / JSON」的字段复位。
+ * 兜底：把「只可能是枚举 / JSON / 数字」的字段复位。
  *
  * 已经被错位污染并**存回工作流**的旧节点，widgets_values_named 里存的也是错位后的值，
- * 光靠按名字重放救不回来。但 separator 只能是那四个选项、selection 只能是 JSON 对象 ——
- * 一旦不是，就一定是错位留下的垃圾，直接复位（后端本来也是这么兜的，复位只是让界面说实话）。
+ * 光靠按名字重放救不回来。但这类字段的取值范围是确定的 —— 一旦不是，就一定是错位留下的垃圾：
+ *
+ * - `loracat_*`：类别下拉框，值必须是它自己选项里的一个（类别增删后按位置恢复会把
+ *   别的 widget 的值灌进来，比如整段 selection JSON）；
+ * - `selection`：只能是 JSON 对象；
+ * - `global_strength`：只能是数字。
+ *
  * prefix / suffix 是自由文本，没法判断，只能用户自己重新填。
  */
 export function sanitizeWidgetValues(node) {
@@ -108,6 +123,20 @@ export function sanitizeWidgetValues(node) {
     w.value = fallback;
     fixed++;
   };
+
+  const forceWidget = (w, ok, fallback) => {
+    if (!w || ok(w.value)) return;
+    w.value = fallback;
+    fixed++;
+  };
+
+  // 类别下拉框（降级界面）：值不在自己的选项里就复位成「不使用」
+  for (const w of node.widgets || []) {
+    if (!w || typeof w.name !== "string" || !w.name.startsWith(WIDGET_PREFIX)) continue;
+    const opts = widgetOptions(w);
+    if (!opts || !opts.length) continue;
+    forceWidget(w, (v) => opts.includes(v), opts.includes(NONE) ? NONE : opts[0]);
+  }
 
   force("separator", (v) => SEPARATOR_OPTIONS.includes(v), "换行");
   force(
@@ -122,6 +151,7 @@ export function sanitizeWidgetValues(node) {
     },
     "{}"
   );
+  force("global_strength", (v) => typeof v === "number" && Number.isFinite(v), 1);
 
   return fixed;
 }

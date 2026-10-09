@@ -403,7 +403,7 @@ def _clamp_strength(value, fallback: float) -> float:
 def top_folder(name: str) -> str:
     """LoRA 相对路径的第一层目录，没有子目录时返回空串。
 
-    用户习惯按主模型建一级子目录（`z-image/xxx.safetensors`），
+    常见做法是按基础模型建一级子目录（`sdxl/xxx.safetensors`），
     这个值就是节点上「只显示某个子文件夹」的过滤依据。
     """
     n = norm(name)

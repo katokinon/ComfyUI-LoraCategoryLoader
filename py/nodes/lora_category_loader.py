@@ -54,8 +54,6 @@ class LoraCategoryLoader:
         lib = get_library()
         scan_names = [e["name"] for e in lora_index().values()]
 
-        required = {}
-
         categories = lib.categories() or [
             {"id": DEFAULT_CATEGORY_ID, "name": "未分类", "mode": "exclusive"}
         ]
@@ -63,10 +61,28 @@ class LoraCategoryLoader:
             log(f"类别数量 {len(categories)} 超过 {MAX_CATEGORY_WIDGETS}，超出部分不会出现在节点上。")
             categories = categories[:MAX_CATEGORY_WIDGETS]
 
+        # 这里所有输入都声明成 **optional**，一个 required 都不留。
+        #
+        # 原因是类别数量会变：每次在管理面板加/删类别，节点上就多/少几个下拉框。
+        # 而 ComfyUI 存 widget 值是**按位置**存的，于是旧工作流载入后，多出来的那几个
+        # 下拉框拿不到值 —— 如果它们是 required，会直接报
+        # 「Required input is missing: loracat_xxx」，整张图都提交不了（即使有 default 也不行）。
+        # 全部改成 optional 之后：缺值就用默认，旧工作流照样能跑。
+        #
+        # ⚠️ 顺序别动！required 排在 optional 前面，widget 的先后由这个顺序决定。
+        # 现在 required 是空的，所以 optional 里的书写顺序 = widget 顺序，
+        # 必须保持 [model, clip, 各下拉框, selection, global_strength] 不变，
+        # 否则已存工作流的位置映射会整体错位。
+        optional = {
+            # 不接也能跑：不实际加载，但仍然输出名称与语法。
+            "model": ("MODEL", {"tooltip": "基础模型；不接则只输出 LoRA 名称与语法，不做加载"}),
+            "clip": ("CLIP", {"tooltip": "CLIP 文本编码器；不接则只输出 LoRA 名称与语法，不做加载"}),
+        }
+
         for cat in categories:
             options = [NONE] + lib.names_in_category(cat["id"], scan_names)
             hint = "单选，同类互斥" if cat.get("mode") != "multi" else "多选"
-            required[WIDGET_PREFIX + cat["id"]] = (
+            optional[WIDGET_PREFIX + cat["id"]] = (
                 options,
                 {
                     "default": NONE,
@@ -75,7 +91,7 @@ class LoraCategoryLoader:
             )
 
         # 自定义界面的状态容器。JS 会把它隐藏起来。
-        required[SELECTION_WIDGET] = (
+        optional[SELECTION_WIDGET] = (
             "STRING",
             {
                 "default": "{}",
@@ -84,22 +100,18 @@ class LoraCategoryLoader:
             },
         )
 
-        optional = {
-            # 不接也能跑：不实际加载，但仍然输出名称与语法。
-            "model": ("MODEL", {"tooltip": "基础模型；不接则只输出 LoRA 名称与语法，不做加载"}),
-            "clip": ("CLIP", {"tooltip": "CLIP 文本编码器；不接则只输出 LoRA 名称与语法，不做加载"}),
-            "global_strength": (
-                "FLOAT",
-                {
-                    "default": 1.0,
-                    "min": 0.0,
-                    "max": 4.0,
-                    "step": 0.05,
-                    "tooltip": "总强度倍率，会乘以每个 LoRA 的强度",
-                },
-            ),
-        }
-        return {"required": required, "optional": optional}
+        optional["global_strength"] = (
+            "FLOAT",
+            {
+                "default": 1.0,
+                "min": 0.0,
+                "max": 4.0,
+                "step": 0.05,
+                "tooltip": "总强度倍率，会乘以每个 LoRA 的强度",
+            },
+        )
+
+        return {"required": {}, "optional": optional}
 
     def load(
         self,
@@ -184,7 +196,7 @@ def parse_selection(raw) -> Optional[List[Pick]]:
 
     当前格式（v2，一个 LoRA 可以在多个类别里出现，勾选状态是全局的）：
 
-        {"ui": true, "v": 2, "on": [名称…], "temps": [...], "strength": {...}, "folder": "z-image"}
+        {"ui": true, "v": 2, "on": [名称…], "temps": [...], "strength": {...}, "folder": "sdxl"}
 
     旧格式（v1，按类别分桶）仍然能读，方便老工作流。
     """
