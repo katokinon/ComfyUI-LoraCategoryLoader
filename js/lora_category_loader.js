@@ -603,6 +603,20 @@ async function render(node) {
   bar.append(summary, clearBtn, panelBtn);
   root.appendChild(bar);
 
+  /* ---- 没接 model / clip：明确告诉用户「现在不会真的加载」 ---- */
+  const missingInputs = missingSourceInputs(node);
+  if (missingInputs.length) {
+    const warn = div(
+      "flex:none;font-size:11px;line-height:1.5;padding:4px 7px;border-radius:6px;" +
+        "background:rgba(217,131,36,.13);border:1px solid rgba(217,131,36,.45);color:#d98324;"
+    );
+    warn.textContent =
+      `未接 ${missingInputs.join(" 和 ")} —— 勾选只会写出名称与语法，不会真的加载 LoRA。` +
+      "要让 LoRA 生效，请把基础模型 / 文本编码器接到左边的输入。";
+    warn.dataset.bareHint = "1";
+    root.appendChild(warn);
+  }
+
   /* ---- 类别 ---- */
   if (!cats.length) {
     root.appendChild(hint("还没有任何类别。先去管理面板建一个。"));
@@ -662,6 +676,19 @@ function hint(text) {
   const d = div("font-size:11px;opacity:.65;line-height:1.5;padding:4px 2px;");
   d.textContent = text;
   return d;
+}
+
+// 没接 model / clip 时节点只会输出名称与语法，不加载任何东西。
+// 光靠日志说没人看得见 —— 界面上必须讲清楚，否则就是「勾了、强度也调了，毫无反应」。
+function missingSourceInputs(node) {
+  const linked = (name) => {
+    const inp = (node.inputs || []).find((i) => i.name === name);
+    return !!(inp && inp.link != null);
+  };
+  const out = [];
+  if (!linked("model")) out.push("model");
+  if (!linked("clip")) out.push("clip");
+  return out;
 }
 
 function matchesFolder(lora, folder) {
@@ -1134,6 +1161,14 @@ app.registerExtension({
         this.__refreshPanel?.();
         notifyPickers();
       }
+      return r;
+    };
+
+    const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+    nodeType.prototype.onConnectionsChange = function () {
+      const r = onConnectionsChange?.apply(this, arguments);
+      // 接上 / 断开 model、clip 会改变「能不能真的加载」，提示条得跟着变
+      setTimeout(() => this.__refreshPanel?.(), 0);
       return r;
     };
 

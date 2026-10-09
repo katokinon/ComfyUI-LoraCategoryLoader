@@ -69,6 +69,9 @@
 **不接 `model` / `clip` 也能跑**：此时不往模型里叠加任何东西，但照样输出 `LORA_NAMES` / `LORA_SYNTAX`（强度取管理面板里配的值）。
 只想看提示词、或只想把 `LORA_NAMES` 喂给下一个节点时，不必被迫拉一整条采样链路。
 
+> **没接 `model` / `clip` 时，面板上会有一条橙色提示**，明确写着「现在只输出名称与语法，不会真的加载 LoRA」。
+> 因为这种情况下勾选和强度都不会带来任何画面变化，不给提示的话很容易误判成插件坏了。两个都接上后提示自动消失。
+
 **`LORA_SYNTAX` 是给人和其它工具读的记录**（A1111 / Civitai 那种写法），它**不参与生成**：
 
 ```
@@ -78,6 +81,16 @@
 
 真正把 LoRA 叠进模型是节点内部用 `comfy.sd.load_lora_for_models` 做的，`MODEL` / `CLIP` 输出已经是加载好的结果。
 把这一路接到「保存图片」的元数据输入，回看时就知道这张图用了哪些 LoRA、什么强度。不关心就空着不接。
+
+**每次实际加载都会在控制台报告结果**：
+
+```
+[LoRA分类加载] 已加载 LoRA「风格/film_like.safetensors」（强度 0.85 / 0.85，应用 180 处权重）
+[LoRA分类加载] ⚠️ LoRA「xxx.safetensors」与当前模型对不上：没有任何权重被应用，画面上不会有变化。
+```
+
+「应用 N 处权重」是实际映射到当前模型上的层数。LoRA 与基础模型不匹配时加载器**不会报错**，
+它只是把匹配不到的权重丢掉 —— 一处都匹配不上时插件会明确警告，而不是让你对着没变化的图干瞪眼。
 
 **加载顺序**：只由**库里的类别顺序 → 类别内列表顺序**决定；多标签的 LoRA 以它第一个类别的位置为准。勾选的先后**不影响**顺序，结果可复现。
 
@@ -174,7 +187,8 @@ ComfyUI/custom_nodes/ComfyUI-LoraCategoryLoader
   "version": 3,
   "categories": [
     { "id": "default", "name": "未分类", "mode": "multi", "order": 0 },
-    { "id": "cat1a2b3c4d", "name": "风格", "mode": "exclusive", "order": 1 }
+    { "id": "cat1a2b3c4d", "name": "风格", "mode": "exclusive", "order": 1 },
+    { "id": "cat9f8e7d6c", "name": "人物", "mode": "multi", "order": 2 }
   ],
   "loras": {
     "风格/film_like.safetensors": {

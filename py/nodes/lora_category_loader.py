@@ -138,6 +138,7 @@ class LoraCategoryLoader:
         syntax: List[str] = []
         seen = set()
         comfy_sd = None
+        comfy_utils = None
 
         for name, ms_override, cs_override in picks:
             if name in seen:
@@ -163,12 +164,70 @@ class LoraCategoryLoader:
                     log(f"跳过：无法解析「{name}」的文件路径。")
                     continue
                 if comfy_sd is None:
+                    import comfy.lora as comfy_lora
                     import comfy.sd as comfy_sd
+                    import comfy.utils as comfy_utils
+
+                # ⚠️ 先把文件读成 state_dict，**不能**把路径直接传给 load_lora_for_models。
+                # 它内部会走 comfy.lora.load_lora(sd, key_map)，那里对 sd 调 .keys()；
+                # 传字符串进去会抛 AttributeError("'str' object has no attribute 'keys'")，
+                # 然后被下面的 except 吞掉 —— 表现就是「接了模型也毫无反应」。
+                # 官方 LoraLoader 同样是先 load_torch_file 再传进去的。
+                lora_sd = None
+                lora_meta = None
                 try:
-                    model, clip = comfy_sd.load_lora_for_models(model, clip, path, ms, cs)
+                    lora_sd, lora_meta = comfy_utils.load_torch_file(
+                        path, safe_load=True, return_metadata=True
+                    )
+                except TypeError:
+                    # 老版本 ComfyUI 的 load_torch_file 没有 return_metadata
+                    try:
+                        lora_sd = comfy_utils.load_torch_file(path, safe_load=True)
+                    except Exception as exc:
+                        log(f"读取 LoRA 文件失败，跳过「{name}」：{exc!r}")
+                        continue
+                except Exception as exc:
+                    log(f"读取 LoRA 文件失败，跳过「{name}」：{exc!r}")
+                    continue
+
+                # 自己算一遍「有多少处权重真的映射到了当前模型上」。
+                # 加载器不会因为键对不上而报错，它只是把匹配不到的那些丢掉；
+                # 一处都没对上时画面上毫无变化，所以必须主动说出来。
+                # 用 key_map + load_lora 直接数，而不是比较 model.patches 的增量 ——
+                # 后者在同一个 LoRA 被重复加载时会把「已经存在」误判成「没生效」。
+                applied = None
+                try:
+                    key_map = {}
+                    if model is not None:
+                        key_map = comfy_lora.model_lora_keys_unet(model.model, key_map)
+                    if clip is not None:
+                        key_map = comfy_lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+                    applied = len(comfy_lora.load_lora(lora_sd, key_map))
+                except Exception:
+                    applied = None
+
+                try:
+                    model, clip = comfy_sd.load_lora_for_models(
+                        model, clip, lora_sd, ms, cs, lora_metadata=lora_meta
+                    )
+                except TypeError:
+                    # 更老的版本没有 lora_metadata 参数
+                    try:
+                        model, clip = comfy_sd.load_lora_for_models(model, clip, lora_sd, ms, cs)
+                    except Exception as exc:
+                        log(f"加载 LoRA「{name}」失败：{exc!r}")
+                        continue
                 except Exception as exc:
                     log(f"加载 LoRA「{name}」失败：{exc!r}")
                     continue
+
+                if applied == 0:
+                    log(
+                        f"⚠️ LoRA「{name}」与当前模型对不上：没有任何权重被应用，画面上不会有变化。"
+                        f"多半这个 LoRA 不是给当前基础模型训练的。"
+                    )
+                elif applied is not None:
+                    log(f"已加载 LoRA「{name}」（强度 {ms:.2f} / {cs:.2f}，应用 {applied} 处权重）")
 
             names.append(name)
             syntax.append(f"<lora:{name}:{ms:.2f}>")

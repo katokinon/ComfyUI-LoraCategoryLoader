@@ -473,29 +473,74 @@ def main() -> int:
         repr(bare_syntax),
     )
     check("裸跑不返回 model / clip", m is None and c is None)
-    check("裸跑不会去 import comfy.sd（懒加载生效）", "comfy.sd" not in sys.modules)
+    check(
+        "裸跑不会去 import comfy（懒加载生效）",
+        "comfy.sd" not in sys.modules and "comfy.utils" not in sys.modules,
+        str([k for k in sys.modules if k.startswith("comfy")]),
+    )
 
-    # 桩掉 comfy.sd，验证「接了 model/clip 就真的会去加载」以及传进去的强度
+    # 桩掉 comfy.sd / comfy.utils，验证「接了 model/clip 就真的会去加载」以及传进去的强度。
+    #
+    # 桩件必须**检查参数类型**：load_lora_for_models 要的是 state_dict 而不是文件路径，
+    # 早先直接传路径时它会抛 AttributeError 被 except 吞掉，而不检查类型的桩件照样通过 ——
+    # 这条回归就是从这里漏出去的。
     calls = []
+    reads = []
 
-    def _fake_load(model, clip, path, ms, cs):
-        calls.append((path, round(float(ms), 4), round(float(cs), 4)))
+    class _FakeModel:
+        def __init__(self):
+            self.patches = {}
+            # 真机上这两个是 ModelPatcher / CLIP 的成员，插件要靠它们枚举模型里的层名
+            self.model = object()
+            self.cond_stage_model = object()
+
+    def _fake_load_torch_file(path, safe_load=False, return_metadata=False):
+        reads.append(path)
+        sd = {
+            "diffusion_model.x.lora_A.weight": object(),
+            "diffusion_model.x.lora_B.weight": object(),
+        }
+        return (sd, {"name": "stub"}) if return_metadata else sd
+
+    def _fake_load(model, clip, lora, ms, cs, lora_metadata=None):
+        calls.append((lora, round(float(ms), 4), round(float(cs), 4)))
+        if isinstance(model, _FakeModel):
+            model.patches["k%d" % len(model.patches)] = 1
         return (model, clip)
 
+    # 「有多少处权重真的映射上了」由这个数控制，用来验证命中 / 完全对不上两种情况
+    hits = {"n": 2}
+
+    fake_lora = types.ModuleType("comfy.lora")
+    fake_lora.model_lora_keys_unet = lambda m, km: dict(km, **{f"k{i}": i for i in range(hits["n"])})
+    fake_lora.model_lora_keys_clip = lambda c, km: km
+    fake_lora.load_lora = lambda sd, km: {k: 1 for k in km}
+
+    fake_utils = types.ModuleType("comfy.utils")
+    fake_utils.load_torch_file = _fake_load_torch_file
     fake_sd = types.ModuleType("comfy.sd")
     fake_sd.load_lora_for_models = _fake_load
     fake_comfy = types.ModuleType("comfy")
     fake_comfy.sd = fake_sd
+    fake_comfy.utils = fake_utils
+    fake_comfy.lora = fake_lora
     sys.modules["comfy"] = fake_comfy
     sys.modules["comfy.sd"] = fake_sd
+    sys.modules["comfy.utils"] = fake_utils
+    sys.modules["comfy.lora"] = fake_lora
 
-    got_m, got_c = object(), object()
+    got_m, got_c = _FakeModel(), _FakeModel()
     m2, c2, names2, syntax2 = LoraCategoryLoader().load(model=got_m, clip=got_c, selection=bare)
     check("接了 model / clip 时真的会去加载", len(calls) == 3, f"{len(calls)} 次")
     check(
+        "每个 LoRA 都先把文件读成 state_dict 再交给加载器",
+        len(reads) == 3 and all(isinstance(c[0], dict) for c in calls),
+        f"读了 {len(reads)} 次；参数类型 {[type(c[0]).__name__ for c in calls]}",
+    )
+    check(
         "加载顺序 = 名称输出顺序",
-        [Path(c[0]).name for c in calls] == [Path(n).name for n in names2.split("\n")],
-        str([Path(c[0]).name for c in calls]),
+        [Path(p).name for p in reads] == [Path(n).name for n in names2.split("\n")],
+        str([Path(p).name for p in reads]),
     )
     check("传进加载器的强度 = 库里的值（0.85 / 0.7）", calls[0][1:] == (0.85, 0.7), str(calls[0][1:]))
     check("model / clip 原样透传（桩件不改变对象）", m2 is got_m and c2 is got_c)
@@ -506,10 +551,35 @@ def main() -> int:
     )
 
     calls.clear()
-    LoraCategoryLoader().load(model=got_m, clip=got_c, global_strength=2.0, selection=bare)
-    check("global_strength 会乘到每个 LoRA 上", calls[0][1:] == (1.7, 1.4), str(calls[0][1:]))
+    reads.clear()
+    import contextlib
+    import io
 
-    del sys.modules["comfy"], sys.modules["comfy.sd"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        LoraCategoryLoader().load(model=got_m, clip=got_c, global_strength=2.0, selection=bare)
+    check("global_strength 会乘到每个 LoRA 上", calls[0][1:] == (1.7, 1.4), str(calls[0][1:]))
+    logged = buf.getvalue()
+    check(
+        "加载成功会报告「应用了多少处权重」（方便发现兼容性问题）",
+        logged.count("应用 2 处权重") == 3,
+        repr(logged[-140:]),
+    )
+
+    # 加载器不会因为「键对不上」而报错，它只是把匹配不到的那些丢掉。
+    # 一处都没对上时画面上毫无变化 —— 必须给出可见的警告，否则用户只会觉得「没反应」。
+    hits["n"] = 0
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        LoraCategoryLoader().load(model=_FakeModel(), clip=_FakeModel(), selection=bare)
+    warned = buf2.getvalue()
+    check(
+        "LoRA 与当前模型对不上时给出明确警告",
+        warned.count("与当前模型对不上") == 3,
+        repr(warned[-160:]),
+    )
+
+    del sys.modules["comfy"], sys.modules["comfy.sd"], sys.modules["comfy.utils"], sys.modules["comfy.lora"]
 
     print("\n=== 7. 预览图上传 / 删除 ===")
     check(
