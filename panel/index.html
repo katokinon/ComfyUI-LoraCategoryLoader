@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoRA 分类管理</title>
+<link rel="stylesheet" href="/lora_category_loader/assets/panel.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo"></span>
+    <div>
+      <h1>LoRA 分类管理</h1>
+      <p id="dataFile" class="sub">正在读取…</p>
+    </div>
+  </div>
+  <div class="actions">
+    <button id="btnAutotag" class="ghost" title="把 models/loras 下的子目录名当作类别，批量归类尚未手动整理过的 LoRA">按文件夹自动归类</button>
+    <button id="btnRescan" class="ghost">重新扫描</button>
+    <button id="btnRefreshNodes" class="primary" title="类别改动后，ComfyUI 需要重新读取节点定义才会出现新的下拉框">刷新节点定义</button>
+  </div>
+</header>
+
+<div id="banner" class="banner hidden"></div>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-head">
+      <span>类别</span>
+      <button id="btnNewCat" class="icon" title="新建类别">＋</button>
+    </div>
+    <div id="catList" class="cat-list"></div>
+    <p class="hint">一个 LoRA 可以有多个类别标签，会在每个类别里都出现，勾选状态联动。<br>类别顺序 = 提示词的拼接顺序。拖动可调整。</p>
+  </aside>
+
+  <main class="content">
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="搜索 LoRA 名称或路径…">
+      <select id="folderFilter" class="hidden" title="只显示某个子文件夹里的 LoRA"></select>
+      <div class="spacer"></div>
+      <span id="count" class="count"></span>
+      <div id="bulkBar" class="bulk hidden">
+        <span>已选 <b id="selCount">0</b> 个</span>
+        <select id="bulkCat"></select>
+        <button id="bulkAdd" class="primary small" title="给选中项加上这个标签，保留原有标签">＋ 加标签</button>
+        <button id="bulkRemove" class="ghost small" title="把选中项的这个标签去掉">－ 去标签</button>
+        <button id="bulkSet" class="ghost small" title="清掉原有标签，只保留这一个">设为唯一</button>
+        <button id="bulkClear" class="ghost small">取消选择</button>
+      </div>
+    </div>
+    <div id="grid" class="grid"></div>
+    <div id="emptyState" class="empty hidden"></div>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="/lora_category_loader/assets/panel.js"></script>
+</body>
+</html>

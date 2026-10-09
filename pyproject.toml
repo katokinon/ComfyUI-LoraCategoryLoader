@@ -1,0 +1,18 @@
+[project]
+name = "comfyui-lora-category-loader"
+version = "0.3.0"
+description = "按类别开关 LoRA（多标签 / 同类互斥 / 勾选联动 / 按子文件夹过滤 / 临时分类）+ 为每个 LoRA 挂载多套自定义提示词预设，勾选后输出为字符串"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "katokinon", email = "katokinon@users.noreply.github.com" }]
+dependencies = []
+keywords = ["comfyui", "lora", "prompt", "custom-nodes"]
+
+[project.urls]
+Repository = "https://github.com/katokinon/ComfyUI-LoraCategoryLoader"
+Homepage = "https://github.com/katokinon/ComfyUI-LoraCategoryLoader"
+
+[tool.comfy]
+DisplayName = "LoRA分类加载"
+Icon = ""
