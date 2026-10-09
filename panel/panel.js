@@ -460,6 +460,7 @@ function loraCard(l) {
   };
   drawChips();
 
+  // 只有一个强度 —— 只作用于 UNET 侧（CLIP 侧不参与，所以不再单列）
   const rowStr = el("div", "row");
   rowStr.innerHTML = `<label>强度</label>`;
   const mIn = el("input");
@@ -468,29 +469,18 @@ function loraCard(l) {
   mIn.min = "0";
   mIn.max = "4";
   mIn.value = l.model_strength;
-  mIn.title = "模型强度";
-  const cIn = el("input");
-  cIn.type = "number";
-  cIn.step = "0.05";
-  cIn.min = "0";
-  cIn.max = "4";
-  cIn.value = l.clip_strength;
-  cIn.title = "CLIP 强度";
-  const saveStrength = async () => {
+  mIn.title = "LoRA 强度（新建/未改过的默认是 1）";
+  mIn.onchange = async () => {
     const ms = parseFloat(mIn.value);
-    const cs = parseFloat(cIn.value);
-    if (Number.isNaN(ms) || Number.isNaN(cs)) return;
+    if (Number.isNaN(ms)) return;
     l.model_strength = ms;
-    l.clip_strength = cs;
     try {
-      await api("/api/lora", { name: l.name, model_strength: ms, clip_strength: cs });
+      await api("/api/lora", { name: l.name, model_strength: ms });
     } catch (e) {
       toast("保存强度失败：" + e.message, true);
     }
   };
-  mIn.onchange = saveStrength;
-  cIn.onchange = saveStrength;
-  rowStr.append(mIn, cIn);
+  rowStr.append(mIn);
   body.appendChild(rowStr);
 
   const pre = el("button", "preset-btn");

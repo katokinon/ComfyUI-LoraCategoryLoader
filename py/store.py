@@ -24,6 +24,10 @@ DEFAULT_CATEGORY_NAME = "未分类"
 DEFAULT_CATEGORY_MODE = "multi"
 CATEGORY_MODES = ("exclusive", "multi")
 
+# LoRA 强度的默认值。只作用于 UNET 侧，所以只有一个值。
+DEFAULT_STRENGTH = 1.0
+MAX_STRENGTH = 4.0
+
 
 def new_id(prefix: str = "c") -> str:
     return f"{prefix}{uuid.uuid4().hex[:8]}"
@@ -81,8 +85,9 @@ class Library:
                         presets.append(make_preset(p.get("name", ""), p.get("text", ""), p.get("id")))
                 loras[norm(key)] = {
                     "categories": _as_list(ent.get("categories"), ent.get("category")),
-                    "model_strength": _clamp_strength(ent.get("model_strength"), 0.8),
-                    "clip_strength": _clamp_strength(ent.get("clip_strength"), 0.8),
+                    "model_strength": _clamp_strength(
+                        ent.get("model_strength"), DEFAULT_STRENGTH
+                    ),
                     "notes": str(ent.get("notes") or ""),
                     "presets": presets,
                 }
@@ -209,8 +214,7 @@ class Library:
         if ent is None and create:
             ent = {
                 "categories": [],
-                "model_strength": 0.8,
-                "clip_strength": 0.8,
+                "model_strength": DEFAULT_STRENGTH,
                 "notes": "",
                 "presets": [],
             }
@@ -241,9 +245,7 @@ class Library:
         elif kw.get("category") is not None:  # 兼容旧的单值写法
             ent["categories"] = self._clean_categories([kw["category"]])
         if kw.get("model_strength") is not None:
-            ent["model_strength"] = _clamp_strength(kw["model_strength"], 0.8)
-        if kw.get("clip_strength") is not None:
-            ent["clip_strength"] = _clamp_strength(kw["clip_strength"], 0.8)
+            ent["model_strength"] = _clamp_strength(kw["model_strength"], DEFAULT_STRENGTH)
         if kw.get("notes") is not None:
             ent["notes"] = str(kw["notes"])
         if kw.get("presets") is not None:
@@ -343,8 +345,7 @@ class Library:
                     "preview": f"/lora_category_loader/api/preview?name={_q(n)}" if e.get("preview") else None,
                     "preview_ver": e.get("preview_ver") or 0,
                     "categories": self.effective_categories(n),
-                    "model_strength": ent.get("model_strength", 0.8),
-                    "clip_strength": ent.get("clip_strength", 0.8),
+                    "model_strength": ent.get("model_strength", DEFAULT_STRENGTH),
                     "notes": ent.get("notes", ""),
                     "presets": ent.get("presets") or [],
                 }
@@ -397,7 +398,7 @@ def _clamp_strength(value, fallback: float) -> float:
         v = float(value)
     except (TypeError, ValueError):
         return fallback
-    return max(0.0, min(4.0, v))
+    return max(0.0, min(MAX_STRENGTH, v))
 
 
 def top_folder(name: str) -> str:

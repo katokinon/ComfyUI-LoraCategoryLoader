@@ -127,7 +127,6 @@ def register() -> None:
             categories=body.get("categories"),
             category=body.get("category"),
             model_strength=body.get("model_strength"),
-            clip_strength=body.get("clip_strength"),
             notes=body.get("notes"),
             presets=body.get("presets"),
         )
@@ -170,8 +169,6 @@ def register() -> None:
                 kwargs["category"] = body["category"]
             if "model_strength" in body:
                 kwargs["model_strength"] = body["model_strength"]
-            if "clip_strength" in body:
-                kwargs["clip_strength"] = body["clip_strength"]
             lib.set_lora(name, save=False, **kwargs)
         # tag_lora 内部已经存过盘了，这里再存一次是幂等的
         lib.save()

@@ -153,7 +153,6 @@ def main() -> int:
         "角色/miku_v3.safetensors",
         category=cat_char["id"],
         model_strength=0.85,
-        clip_strength=0.7,
         presets=[
             {"id": "p1", "name": "日常", "text": "1girl, hatsune miku, twin tails"},
             {"id": "p2", "name": "赛博", "text": "cyberpunk miku, neon lights"},
@@ -239,8 +238,18 @@ def main() -> int:
     required = inputs["required"]
     optional = inputs["optional"]
     check(
-        "MODEL / CLIP 是可选输入（不接线也能跑，只输出名称与语法）",
-        "model" in optional and "clip" in optional,
+        "MODEL 是可选输入（不接线也能跑，只输出名称与语法）",
+        "model" in optional and "model" not in required,
+    )
+    check(
+        "CLIP 既不是输入也不是输出（只处理 UNET 侧）",
+        "clip" not in optional and "clip" not in required,
+        f"输入 {sorted(required) + sorted(optional)}；输出 {list(LoraCategoryLoader.RETURN_NAMES)}",
+    )
+    check(
+        "返回值只有 MODEL / LORA_NAMES / LORA_SYNTAX",
+        list(LoraCategoryLoader.RETURN_NAMES) == ["MODEL", "LORA_NAMES", "LORA_SYNTAX"],
+        str(list(LoraCategoryLoader.RETURN_NAMES)),
     )
     check(
         "一个 required 都不留（类别增删后旧工作流缺值也不该提交失败）",
@@ -254,9 +263,9 @@ def main() -> int:
         "selection" in optional and "global_strength" in optional,
     )
     check(
-        "widget 顺序没变（model/clip -> 各下拉 -> selection -> global_strength）",
+        "widget 顺序没变（model -> 各下拉 -> selection -> global_strength）",
         list(optional.keys())
-        == ["model", "clip"] + [WIDGET_PREFIX + DEFAULT_CATEGORY_ID, WIDGET_PREFIX + cat_char["id"], WIDGET_PREFIX + cat_style["id"]] + ["selection", "global_strength"],
+        == ["model"] + [WIDGET_PREFIX + DEFAULT_CATEGORY_ID, WIDGET_PREFIX + cat_char["id"], WIDGET_PREFIX + cat_style["id"]] + ["selection", "global_strength"],
         str(list(optional.keys())),
     )
     char_widget = optional[WIDGET_PREFIX + cat_char["id"]][0]
@@ -362,6 +371,7 @@ def main() -> int:
             cat_char["id"]: ["角色/rem_v2.safetensors", "角色/miku_v3.safetensors"],
         },
         "temps": [{"id": "t1", "name": "临时", "loras": ["plain.safetensors"]}],
+        # 旧工作流里可能还留着 clip 那一格，必须被忽略（只认 model）
         "strength": {"角色/miku_v3.safetensors": {"model": 1.2, "clip": 0.3}},
     }
     picks = parse_selection(json.dumps(panel_state))
@@ -374,8 +384,12 @@ def main() -> int:
     ]
     check("顺序 = 类别顺序 -> 类别内数组顺序 -> 临时分类", order == expect_order, str(order))
     by_pick = {p[0]: p for p in picks}
-    check("工作流内的强度覆盖被读出来", by_pick["角色/miku_v3.safetensors"][1:] == (1.2, 0.3))
-    check("没覆盖的 LoRA 强度留空（用库里的）", by_pick["角色/rem_v2.safetensors"][1:] == (None, None))
+    check(
+        "工作流内的强度覆盖被读出来（旧状态里的 clip 会被忽略）",
+        by_pick["角色/miku_v3.safetensors"][1:] == (1.2,),
+        str(by_pick["角色/miku_v3.safetensors"]),
+    )
+    check("没覆盖的 LoRA 强度留空（用库里的）", by_pick["角色/rem_v2.safetensors"][1:] == (None,))
 
     ghost = dict(panel_state)
     ghost["cats"] = {"已删除的类别id": ["plain.safetensors"]}
@@ -404,7 +418,7 @@ def main() -> int:
         [p[0] for p in fc] == ["plain.safetensors", "角色/miku_v3.safetensors"],
         str([p[0] for p in fc]),
     )
-    check("降级通路不返回强度覆盖", all(p[1] is None and p[2] is None for p in fc))
+    check("降级通路不返回强度覆盖（用库里的）", all(len(p) == 2 and p[1] is None for p in fc))
 
     print("\n=== 6c. v2 状态格式（全局启用列表 on） ===")
     v2_state = {
@@ -423,10 +437,11 @@ def main() -> int:
         str([p[0] for p in picks_v2]),
     )
     check(
-        "v2：工作流内的强度覆盖照旧读出来",
-        {p[0]: p[1:] for p in picks_v2}["角色/miku_v3.safetensors"] == (1.2, 0.3),
+        "v2：工作流内的强度覆盖照旧读出来（clip 那格忽略）",
+        {p[0]: p[1:] for p in picks_v2}["角色/miku_v3.safetensors"] == (1.2,),
+        str({p[0]: p[1:] for p in picks_v2}),
     )
-    check("v2：没写强度覆盖的留空", {p[0]: p[1:] for p in picks_v2}["plain.safetensors"] == (None, None))
+    check("v2：没写强度覆盖的留空", {p[0]: p[1:] for p in picks_v2}["plain.safetensors"] == (None,))
     check(
         "v2：同一个 LoRA 写两次只算一次",
         len(parse_selection(json.dumps({"ui": True, "v": 2, "on": ["plain.safetensors", "plain.safetensors"]}))) == 1,
@@ -450,7 +465,7 @@ def main() -> int:
     )
     lib.set_lora("画风/film.safetensors", categories=[cat_style["id"]])
 
-    print("\n=== 6b. 不接 model / clip 的裸跑（为了单独看提示词） ===")
+    print("\n=== 6b. 不接 model 的裸跑（为了单独看提示词） ===")
     bare = json.dumps(
         {
             "ui": True,
@@ -461,7 +476,7 @@ def main() -> int:
             "temps": [{"id": "t1", "name": "临时", "loras": ["plain.safetensors"]}],
         }
     )
-    m, c, bare_names, bare_syntax = LoraCategoryLoader().load(model=None, clip=None, selection=bare)
+    m, bare_names, bare_syntax = LoraCategoryLoader().load(model=None, selection=bare)
     check(
         "裸跑照样输出 LoRA 名称（顺序 = 类别顺序 -> 临时分类）",
         bare_names.split("\n") == ["角色/miku_v3.safetensors", "画风/film.safetensors", "plain.safetensors"],
@@ -472,14 +487,14 @@ def main() -> int:
         bare_syntax.split("\n")[0] == "<lora:角色/miku_v3.safetensors:0.85>",
         repr(bare_syntax),
     )
-    check("裸跑不返回 model / clip", m is None and c is None)
+    check("裸跑不返回 model", m is None)
     check(
         "裸跑不会去 import comfy（懒加载生效）",
         "comfy.sd" not in sys.modules and "comfy.utils" not in sys.modules,
         str([k for k in sys.modules if k.startswith("comfy")]),
     )
 
-    # 桩掉 comfy.sd / comfy.utils，验证「接了 model/clip 就真的会去加载」以及传进去的强度。
+    # 桩掉 comfy.sd / comfy.utils / comfy.lora，验证「接了 model 就真的会去加载」以及传进去的强度。
     #
     # 桩件必须**检查参数类型**：load_lora_for_models 要的是 state_dict 而不是文件路径，
     # 早先直接传路径时它会抛 AttributeError 被 except 吞掉，而不检查类型的桩件照样通过 ——
@@ -490,9 +505,8 @@ def main() -> int:
     class _FakeModel:
         def __init__(self):
             self.patches = {}
-            # 真机上这两个是 ModelPatcher / CLIP 的成员，插件要靠它们枚举模型里的层名
+            # 真机上这是 ModelPatcher 的成员，插件要靠它枚举模型里的层名
             self.model = object()
-            self.cond_stage_model = object()
 
     def _fake_load_torch_file(path, safe_load=False, return_metadata=False):
         reads.append(path)
@@ -503,7 +517,7 @@ def main() -> int:
         return (sd, {"name": "stub"}) if return_metadata else sd
 
     def _fake_load(model, clip, lora, ms, cs, lora_metadata=None):
-        calls.append((lora, round(float(ms), 4), round(float(cs), 4)))
+        calls.append((lora, round(float(ms), 4), clip))
         if isinstance(model, _FakeModel):
             model.patches["k%d" % len(model.patches)] = 1
         return (model, clip)
@@ -529,9 +543,9 @@ def main() -> int:
     sys.modules["comfy.utils"] = fake_utils
     sys.modules["comfy.lora"] = fake_lora
 
-    got_m, got_c = _FakeModel(), _FakeModel()
-    m2, c2, names2, syntax2 = LoraCategoryLoader().load(model=got_m, clip=got_c, selection=bare)
-    check("接了 model / clip 时真的会去加载", len(calls) == 3, f"{len(calls)} 次")
+    got_m = _FakeModel()
+    m2, names2, syntax2 = LoraCategoryLoader().load(model=got_m, selection=bare)
+    check("接了 model 时真的会去加载", len(calls) == 3, f"{len(calls)} 次")
     check(
         "每个 LoRA 都先把文件读成 state_dict 再交给加载器",
         len(reads) == 3 and all(isinstance(c[0], dict) for c in calls),
@@ -542,8 +556,9 @@ def main() -> int:
         [Path(p).name for p in reads] == [Path(n).name for n in names2.split("\n")],
         str([Path(p).name for p in reads]),
     )
-    check("传进加载器的强度 = 库里的值（0.85 / 0.7）", calls[0][1:] == (0.85, 0.7), str(calls[0][1:]))
-    check("model / clip 原样透传（桩件不改变对象）", m2 is got_m and c2 is got_c)
+    check("传给加载器的 clip 是 None（只处理 UNET 侧）", all(c[2] is None for c in calls), str([c[2] for c in calls]))
+    check("传进加载器的强度 = 库里的值（0.85）", calls[0][1] == 0.85, str(calls[0][1]))
+    check("model 原样透传（桩件不改变对象）", m2 is got_m)
     check(
         "接了线路时同样输出名称与语法",
         names2.split("\n") == ["角色/miku_v3.safetensors", "画风/film.safetensors", "plain.safetensors"],
@@ -557,8 +572,8 @@ def main() -> int:
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        LoraCategoryLoader().load(model=got_m, clip=got_c, global_strength=2.0, selection=bare)
-    check("global_strength 会乘到每个 LoRA 上", calls[0][1:] == (1.7, 1.4), str(calls[0][1:]))
+        LoraCategoryLoader().load(model=got_m, global_strength=2.0, selection=bare)
+    check("global_strength 会乘到每个 LoRA 上", calls[0][1] == 1.7, str(calls[0][1]))
     logged = buf.getvalue()
     check(
         "加载成功会报告「应用了多少处权重」（方便发现兼容性问题）",
@@ -571,7 +586,7 @@ def main() -> int:
     hits["n"] = 0
     buf2 = io.StringIO()
     with contextlib.redirect_stdout(buf2):
-        LoraCategoryLoader().load(model=_FakeModel(), clip=_FakeModel(), selection=bare)
+        LoraCategoryLoader().load(model=_FakeModel(), selection=bare)
     warned = buf2.getvalue()
     check(
         "LoRA 与当前模型对不上时给出明确警告",
@@ -672,7 +687,18 @@ def main() -> int:
         legacy.entry("角色/miku_v3.safetensors")["model_strength"] == 0.9
         and len(legacy.presets_of("角色/miku_v3.safetensors")) == 1,
     )
+    check(
+        "旧数据里的 clip_strength 被丢掉（只留一个强度）",
+        "clip_strength" not in legacy.entry("角色/miku_v3.safetensors"),
+        str(sorted(legacy.entry("角色/miku_v3.safetensors").keys())),
+    )
     check("迁移：文件被就地升到 v3", json.loads(legacy_path.read_text(encoding="utf-8"))["version"] == 3)
+
+    print("\n=== 9b. 默认强度 ===")
+    fresh = Library(TMP / "fresh_meta.json")
+    ent = fresh.entry("brand-new.safetensors")
+    check("新建条目默认强度是 1.0", ent["model_strength"] == 1.0, str(ent["model_strength"]))
+    check("新建条目不再有 clip 强度", "clip_strength" not in ent, str(sorted(ent.keys())))
 
     broken_path = TMP / "legacy_broken.json"
     broken_path.write_text(

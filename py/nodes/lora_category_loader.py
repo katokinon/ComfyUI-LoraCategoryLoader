@@ -11,10 +11,13 @@
 
 `load()` 优先读 `selection`；只有当它里没有 UI 写入标记时才回退到下拉框。
 
-`model` / `clip` 是**可选**输入：只想拿提示词文本时可以不接，此时照样输出
+`model` 是**可选**输入：只想拿提示词文本时可以不接，此时照样输出
 LORA_NAMES / LORA_SYNTAX（强度取库里的值），但不往模型里叠加任何东西。
 否则用户为了看一眼提示词，还得被迫拉一整条采样链路，而且整张图会因为
-「required_input_missing: model / clip」被判定无效、一次都不执行。
+「required_input_missing: model」被判定无效、一次都不执行。
+
+只处理 UNET 侧：CLIP 既不输入也不输出 —— 常见 LoRA 对文本编码器的影响可以忽略，
+留着反而让人以为必须接。
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from ..scanner import index as lora_index
 from ..scanner import resolve as resolve_lora
-from ..store import DEFAULT_CATEGORY_ID, get_library
+from ..store import DEFAULT_CATEGORY_ID, DEFAULT_STRENGTH, get_library
 from ..util import log, norm
 
 NONE = "(不使用)"
@@ -32,19 +35,18 @@ WIDGET_PREFIX = "loracat_"
 SELECTION_WIDGET = "selection"
 MAX_CATEGORY_WIDGETS = 60
 
-# (名称, 模型强度或 None, CLIP 强度或 None)
-Pick = Tuple[str, Optional[float], Optional[float]]
+# (名称, 模型强度或 None)
+Pick = Tuple[str, Optional[float]]
 
 
 class LoraCategoryLoader:
     CATEGORY = "LoRA分类加载"
     FUNCTION = "load"
 
-    RETURN_TYPES = ("MODEL", "CLIP", "STRING", "STRING")
-    RETURN_NAMES = ("MODEL", "CLIP", "LORA_NAMES", "LORA_SYNTAX")
+    RETURN_TYPES = ("MODEL", "STRING", "STRING")
+    RETURN_NAMES = ("MODEL", "LORA_NAMES", "LORA_SYNTAX")
     RETURN_TOOLTIPS = (
         "叠加了所选 LoRA 的模型；没接 model 输入时原样透传为空",
-        "叠加了所选 LoRA 的 CLIP；没接 clip 输入时原样透传为空",
         "本次启用的 LoRA 名称，按加载顺序换行分隔（接到「LoRA提示词选择」）",
         "<lora:名称:强度> 形式，便于写入元数据或排查",
     )
@@ -71,12 +73,11 @@ class LoraCategoryLoader:
         #
         # ⚠️ 顺序别动！required 排在 optional 前面，widget 的先后由这个顺序决定。
         # 现在 required 是空的，所以 optional 里的书写顺序 = widget 顺序，
-        # 必须保持 [model, clip, 各下拉框, selection, global_strength] 不变，
+        # 必须保持 [model, 各下拉框, selection, global_strength] 不变，
         # 否则已存工作流的位置映射会整体错位。
         optional = {
             # 不接也能跑：不实际加载，但仍然输出名称与语法。
             "model": ("MODEL", {"tooltip": "基础模型；不接则只输出 LoRA 名称与语法，不做加载"}),
-            "clip": ("CLIP", {"tooltip": "CLIP 文本编码器；不接则只输出 LoRA 名称与语法，不做加载"}),
         }
 
         for cat in categories:
@@ -116,7 +117,6 @@ class LoraCategoryLoader:
     def load(
         self,
         model=None,
-        clip=None,
         global_strength: float = 1.0,
         selection: str = "{}",
         **kwargs,
@@ -131,8 +131,8 @@ class LoraCategoryLoader:
             picks = picks_from_combos(lib, kwargs)
             source = "下拉框（降级）"
 
-        # model / clip 任一没接，就只做「名称 + 语法」输出。
-        bare = model is None or clip is None
+        # 没接 model 就只做「名称 + 语法」输出。
+        bare = model is None
 
         names: List[str] = []
         syntax: List[str] = []
@@ -140,7 +140,7 @@ class LoraCategoryLoader:
         comfy_sd = None
         comfy_utils = None
 
-        for name, ms_override, cs_override in picks:
+        for name, ms_override in picks:
             if name in seen:
                 continue
             if name not in known:
@@ -150,13 +150,12 @@ class LoraCategoryLoader:
 
             entry = lib.entry(name, create=False) or {}
             ms = _safe_float(
-                ms_override if ms_override is not None else entry.get("model_strength", 0.8), 0.8
-            )
-            cs = _safe_float(
-                cs_override if cs_override is not None else entry.get("clip_strength", 0.8), 0.8
+                ms_override
+                if ms_override is not None
+                else entry.get("model_strength", DEFAULT_STRENGTH),
+                DEFAULT_STRENGTH,
             )
             ms *= factor
-            cs *= factor
 
             if not bare:
                 path = resolve_lora(name)
@@ -197,23 +196,20 @@ class LoraCategoryLoader:
                 # 后者在同一个 LoRA 被重复加载时会把「已经存在」误判成「没生效」。
                 applied = None
                 try:
-                    key_map = {}
-                    if model is not None:
-                        key_map = comfy_lora.model_lora_keys_unet(model.model, key_map)
-                    if clip is not None:
-                        key_map = comfy_lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+                    key_map = comfy_lora.model_lora_keys_unet(model.model, {})
                     applied = len(comfy_lora.load_lora(lora_sd, key_map))
                 except Exception:
                     applied = None
 
+                # clip 传 None：本节点只处理 UNET 侧。
                 try:
-                    model, clip = comfy_sd.load_lora_for_models(
-                        model, clip, lora_sd, ms, cs, lora_metadata=lora_meta
+                    model, _ = comfy_sd.load_lora_for_models(
+                        model, None, lora_sd, ms, ms, lora_metadata=lora_meta
                     )
                 except TypeError:
                     # 更老的版本没有 lora_metadata 参数
                     try:
-                        model, clip = comfy_sd.load_lora_for_models(model, clip, lora_sd, ms, cs)
+                        model, _ = comfy_sd.load_lora_for_models(model, None, lora_sd, ms, ms)
                     except Exception as exc:
                         log(f"加载 LoRA「{name}」失败：{exc!r}")
                         continue
@@ -227,7 +223,7 @@ class LoraCategoryLoader:
                         f"多半这个 LoRA 不是给当前基础模型训练的。"
                     )
                 elif applied is not None:
-                    log(f"已加载 LoRA「{name}」（强度 {ms:.2f} / {cs:.2f}，应用 {applied} 处权重）")
+                    log(f"已加载 LoRA「{name}」（强度 {ms:.2f}，应用 {applied} 处权重）")
 
             names.append(name)
             syntax.append(f"<lora:{name}:{ms:.2f}>")
@@ -237,10 +233,10 @@ class LoraCategoryLoader:
         elif bare:
             log(
                 f"（来源：{source}）{len(names)} 个 LoRA 只输出了名称与语法，"
-                f"没有接 model / clip，未做实际加载。"
+                f"没有接 model，未做实际加载。"
             )
 
-        return (model, clip, "\n".join(names), "\n".join(syntax))
+        return (model, "\n".join(names), "\n".join(syntax))
 
 
 # --------------------------------------------------------------------------- #
@@ -271,19 +267,19 @@ def parse_selection(raw) -> Optional[List[Pick]]:
     strength = data.get("strength")
     strength = strength if isinstance(strength, dict) else {}
 
-    def overrides(name: str) -> Tuple[Optional[float], Optional[float]]:
+    def overrides(name: str) -> Optional[float]:
+        """工作流里给这个 LoRA 单独设的强度；没有就用库里的。"""
         ov = strength.get(name) or {}
         if not isinstance(ov, dict):
-            return (None, None)
-        return (_maybe_float(ov.get("model")), _maybe_float(ov.get("clip")))
+            return None
+        return _maybe_float(ov.get("model"))
 
     on = data.get("on")
     if isinstance(on, list):
         names = [norm(n) for n in on if isinstance(n, str) and n.strip()]
         out: List[Pick] = []
         for name in _order_by_library(names):
-            ms, cs = overrides(name)
-            out.append((name, ms, cs))
+            out.append((name, overrides(name)))
         return out
 
     # ---- 以下是 v1 旧格式（cats / temps 分桶），继续支持 ----
@@ -304,8 +300,7 @@ def parse_selection(raw) -> Optional[List[Pick]]:
         if not name or name in seen:
             return
         seen.add(name)
-        ms, cs = overrides(name)
-        out.append((name, ms, cs))
+        out.append((name, overrides(name)))
 
     # 1) 先按库里的类别顺序（= 面板上看到的顺序 = 加载顺序）
     lib = get_library()
@@ -367,7 +362,7 @@ def picks_from_combos(lib, kwargs) -> List[Pick]:
         if name in seen:
             continue
         seen.add(name)
-        out.append((name, None, None))
+        out.append((name, None))
     return out
 
 

@@ -487,11 +487,81 @@ function removeFromTemp(node, st, temp, name) {
   writeState(node, st);
 }
 
-function setStrength(node, st, name, key, value) {
-  const cur = st.strength[name] || {};
-  cur[key] = value;
-  st.strength[name] = cur;
+function setStrength(node, st, name, value) {
+  st.strength[name] = { model: value };
   writeState(node, st, false);
+}
+
+function clampStrength(v) {
+  if (!Number.isFinite(v)) return 1;
+  return Math.max(0, Math.min(4, Math.round(v * 100) / 100));
+}
+
+// 强度控件：一个够大的数字框 + 按住左右拖。
+//
+// 拖动是自己用 pointer 事件做的（画布上没法用原生 range）。关键有两点：
+// ① `pointerdown` 必须 stopPropagation，否则冒泡到行上会触发「拖到别的分类」；
+// ② 用 setPointerCapture，这样指针滑出输入框后事件仍然回来。
+function strengthBox(node, st, lora) {
+  const cur = st.strength[lora.name] || {};
+  const shown = cur.model !== undefined ? cur.model : lora.model_strength;
+
+  const inp = document.createElement("input");
+  inp.type = "number";
+  inp.step = "0.05";
+  inp.min = "0";
+  inp.max = "4";
+  inp.value = shown;
+  inp.title = "LoRA 强度：可以直接输入，也可以按住左右拖动（只影响当前工作流）";
+  // 宽度用 flex-basis 一起定住：ComfyUI 的全局样式里有 input{width:100%} 之类的规则，
+  // 只写 width 会被压回去，框太小就不好点、也不好拖。
+  inp.style.cssText =
+    "box-sizing:border-box;flex:0 0 92px;width:92px;min-width:92px;" +
+    "font-size:12px;padding:3px 6px;border-radius:6px;text-align:center;cursor:ew-resize;" +
+    // 输入框里还是得能选文字、能打字，把继承下来的 user-select:none 顶回去
+    "user-select:text;-webkit-user-select:text;" +
+    "background:rgba(128,128,128,.12);border:1px solid " + LINE + ";color:inherit;outline:none;";
+  inp.onclick = (ev) => ev.stopPropagation();
+  inp.onchange = () => {
+    const v = parseFloat(inp.value);
+    if (!Number.isNaN(v)) setStrength(node, st, lora.name, clampStrength(v));
+  };
+
+  let drag = null;
+  inp.onpointerdown = (ev) => {
+    ev.stopPropagation();
+    if (ev.button !== 0) return;
+    try {
+      inp.setPointerCapture(ev.pointerId);
+    } catch (e) {
+      /* 拿不到捕获也能用，只是拖出框就不跟手了 */
+    }
+    drag = { x: ev.clientX, start: parseFloat(inp.value) || 0, moved: false };
+  };
+  inp.onpointermove = (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.x;
+    if (!drag.moved) {
+      if (Math.abs(dx) < 3) return; // 几像素的抖动还算点击
+      drag.moved = true;
+      window.getSelection?.()?.removeAllRanges(); // 拖动时别把页面文字刷成选中
+    }
+    ev.preventDefault();
+    // 横向 100px = 1.0 强度
+    inp.value = clampStrength(drag.start + dx * 0.01).toFixed(2);
+  };
+  const finish = () => {
+    if (!drag) return;
+    const moved = drag.moved;
+    drag = null;
+    if (!moved) return;
+    const v = parseFloat(inp.value);
+    if (!Number.isNaN(v)) setStrength(node, st, lora.name, clampStrength(v));
+  };
+  inp.onpointerup = finish;
+  inp.onpointercancel = finish;
+  inp.onlostpointercapture = finish;
+  return inp;
 }
 
 function clearCat(node, st, cat) {
@@ -603,7 +673,7 @@ async function render(node) {
   bar.append(summary, clearBtn, panelBtn);
   root.appendChild(bar);
 
-  /* ---- 没接 model / clip：明确告诉用户「现在不会真的加载」 ---- */
+  /* ---- 没接 model：明确告诉用户「现在不会真的加载」 ---- */
   const missingInputs = missingSourceInputs(node);
   if (missingInputs.length) {
     const warn = div(
@@ -611,8 +681,8 @@ async function render(node) {
         "background:rgba(217,131,36,.13);border:1px solid rgba(217,131,36,.45);color:#d98324;"
     );
     warn.textContent =
-      `未接 ${missingInputs.join(" 和 ")} —— 勾选只会写出名称与语法，不会真的加载 LoRA。` +
-      "要让 LoRA 生效，请把基础模型 / 文本编码器接到左边的输入。";
+      "未接 model —— 勾选只会写出名称与语法，不会真的加载 LoRA。" +
+      "要让 LoRA 生效，请把基础模型接到左边的 model 输入。";
     warn.dataset.bareHint = "1";
     root.appendChild(warn);
   }
@@ -678,17 +748,11 @@ function hint(text) {
   return d;
 }
 
-// 没接 model / clip 时节点只会输出名称与语法，不加载任何东西。
+// 没接 model 时节点只会输出名称与语法，不加载任何东西。
 // 光靠日志说没人看得见 —— 界面上必须讲清楚，否则就是「勾了、强度也调了，毫无反应」。
 function missingSourceInputs(node) {
-  const linked = (name) => {
-    const inp = (node.inputs || []).find((i) => i.name === name);
-    return !!(inp && inp.link != null);
-  };
-  const out = [];
-  if (!linked("model")) out.push("model");
-  if (!linked("clip")) out.push("clip");
-  return out;
+  const inp = (node.inputs || []).find((i) => i.name === "model");
+  return inp && inp.link != null ? [] : ["model"];
 }
 
 function matchesFolder(lora, folder) {
@@ -823,29 +887,7 @@ function loraRow(node, st, cat, lora, lib, on) {
   }
 
   if (on) {
-    const cur = st.strength[lora.name] || {};
-    const mk = (key, fallback, label) => {
-      const inp = document.createElement("input");
-      inp.type = "number";
-      inp.step = "0.05";
-      inp.min = "0";
-      inp.max = "4";
-      inp.value = cur[key] !== undefined ? cur[key] : fallback;
-      inp.title = label + "强度（只影响当前工作流）";
-      inp.style.cssText =
-        "width:50px;flex:none;font-size:10px;padding:1px 4px;border-radius:5px;" +
-        // 输入框里还是得能选文字，把继承下来的 user-select:none 顶回去
-        "user-select:text;-webkit-user-select:text;" +
-        "background:rgba(128,128,128,.12);border:1px solid " + LINE + ";color:inherit;outline:none;";
-      inp.onclick = (ev) => ev.stopPropagation();
-      inp.onpointerdown = (ev) => ev.stopPropagation();
-      inp.onchange = () => {
-        const v = parseFloat(inp.value);
-        if (!Number.isNaN(v)) setStrength(node, st, lora.name, key, v);
-      };
-      return inp;
-    };
-    row.append(mk("model", lora.model_strength, "模型"), mk("clip", lora.clip_strength, "CLIP"));
+    row.appendChild(strengthBox(node, st, lora));
   }
 
   // 摘掉「本类别」这个标签。默认类别是兜底，摘了也会立刻回来，所以不给按钮。
@@ -1167,7 +1209,7 @@ app.registerExtension({
     const onConnectionsChange = nodeType.prototype.onConnectionsChange;
     nodeType.prototype.onConnectionsChange = function () {
       const r = onConnectionsChange?.apply(this, arguments);
-      // 接上 / 断开 model、clip 会改变「能不能真的加载」，提示条得跟着变
+      // 接上 / 断开 model 会改变「能不能真的加载」，提示条得跟着变
       setTimeout(() => this.__refreshPanel?.(), 0);
       return r;
     };
