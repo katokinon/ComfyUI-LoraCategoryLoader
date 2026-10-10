@@ -632,19 +632,40 @@ async function render(node) {
   root.innerHTML = "";
 
   /* ---- 工具条：搜索 + 子文件夹过滤 ---- */
-  const bar = div("display:flex;align-items:center;gap:5px;flex:none;");
+  // 允许换行：节点窄的时候按钮换到第二行，别把搜索框挤成一条缝
+  const bar = div("display:flex;align-items:center;gap:5px;row-gap:4px;flex-wrap:wrap;flex:none;");
   const search = document.createElement("input");
   search.type = "text";
   search.placeholder = "搜索 LoRA…";
   search.value = node.__filter || "";
   search.style.cssText =
-    "flex:1;min-width:0;font-size:11px;padding:3px 7px;border-radius:6px;" +
+    "flex:1 1 96px;min-width:78px;font-size:11px;padding:3px 7px;border-radius:6px;" +
     "background:rgba(128,128,128,.12);border:1px solid " + LINE + ";color:inherit;outline:none;";
+  // 输入要重渲染整个面板，而重渲染会把输入框一起重建 —— 焦点和光标都会丢，
+  // 表现就是「每打一个字就跳到框外」。所以：
+  // ① 防抖计时器挂在 node 上（挂在元素上会随重建丢掉，导致每次按键都重渲染一次）；
+  // ② 值从**面板里当前那个**输入框读（别抓已经作废的旧元素，不然会吞掉刚输入的字）；
+  // ③ 渲染完把焦点和光标还回去。
+  search.dataset.role = "search";
   search.oninput = () => {
-    clearTimeout(search._t);
-    search._t = setTimeout(() => {
-      node.__filter = search.value;
-      render(node);
+    clearTimeout(node.__searchT);
+    node.__searchT = setTimeout(async () => {
+      const root = node.__catUI;
+      if (!root) return;
+      const prev = root.querySelector('[data-role="search"]');
+      const value = prev ? prev.value : search.value;
+      const keepFocus = document.activeElement === prev || root.contains(document.activeElement);
+      node.__filter = value;
+      await render(node);
+      if (!keepFocus) return;
+      const next = node.__catUI && node.__catUI.querySelector('[data-role="search"]');
+      if (!next) return;
+      next.focus();
+      try {
+        next.setSelectionRange(value.length, value.length);
+      } catch (e) {
+        /* 某些输入类型不支持 setSelectionRange，忽略 */
+      }
     }, 150);
   };
   bar.appendChild(search);

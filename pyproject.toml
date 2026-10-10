@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-lora-category-loader"
-version = "0.4.0"
+version = "0.4.1"
 description = "按类别开关 LoRA（多标签 / 同类互斥 / 勾选联动 / 按子文件夹过滤 / 临时分类）+ 为每个 LoRA 挂载多套自定义提示词预设，勾选后输出为字符串"
 readme = "README.md"
 requires-python = ">=3.9"
