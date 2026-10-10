@@ -9,7 +9,10 @@ const STATE = {
   default_category: "default",
 };
 
-let filterCat = "all";
+// 类别筛选是多选的：空集 = 不筛。
+// 选中两个以上时出现「与 / 或」切换 —— 与 = 交集（同时属于这些类别），或 = 并集。
+const filterCats = new Set();
+let filterMode = "and";
 let filterFolder = "*";
 let query = "";
 const picked = new Set();
@@ -151,8 +154,7 @@ function renderSidebar() {
 
   list.appendChild(
     catRow({ id: "all", name: "全部", mode: null, count: STATE.loras.length })
-  );
-  for (const c of STATE.categories) {
+  );  for (const c of STATE.categories) {
     const row = catRow({ ...c, count: catCount(c.id) });
     row.draggable = true;
     row.addEventListener("dragstart", () => {
@@ -180,11 +182,38 @@ function renderSidebar() {
     });
     list.appendChild(row);
   }
+
+  syncFilterModeUI();
+}
+
+// 「与 / 或」只在选中两个以上类别时才有意义
+function syncFilterModeUI() {
+  const seg = $("#filterMode");
+  if (!seg) return;
+  seg.classList.toggle("hidden", filterCats.size < 2);
+  for (const b of seg.querySelectorAll("button")) {
+    b.classList.toggle("on", b.dataset.mode === filterMode);
+  }
+  const hint = $("#filterHint");
+  if (hint) {
+    if (filterCats.size >= 2) {
+      const names = [...filterCats]
+        .map((id) => (STATE.categories.find((c) => c.id === id) || {}).name || id)
+        .join(filterMode === "and" ? " 且 " : " 或 ");
+      hint.textContent = `筛选中：${names}`;
+      hint.classList.remove("hidden");
+    } else {
+      hint.classList.add("hidden");
+    }
+  }
 }
 
 function catRow(cat) {
-  const row = el("div", "cat" + (filterCat === cat.id ? " active" : ""));
+  const isAll = cat.id === "all";
+  const active = isAll ? filterCats.size === 0 : filterCats.has(cat.id);
+  const row = el("div", "cat" + (active ? " active" : ""));
   row.dataset.id = cat.id;
+  row.title = isAll ? "显示全部（清空筛选）" : "点一下加入/移出筛选，可以选多个";
 
   const nm = el("span", "nm");
   nm.textContent = cat.name;
@@ -221,7 +250,7 @@ function catRow(cat) {
       if (!confirm(`删除类别「${cat.name}」？\n这些 LoRA 会摘掉这个标签；如果它没有别的标签，就会回到「未分类」。`)) return;
       try {
         await api("/api/category/delete", { id: cat.id });
-        if (filterCat === cat.id) filterCat = "all";
+        filterCats.delete(cat.id);
         needsNodeRefresh();
         await load();
       } catch (e) {
@@ -233,7 +262,13 @@ function catRow(cat) {
   }
 
   row.onclick = () => {
-    filterCat = cat.id;
+    if (isAll) {
+      filterCats.clear();
+    } else if (filterCats.has(cat.id)) {
+      filterCats.delete(cat.id);
+    } else {
+      filterCats.add(cat.id);
+    }
     renderSidebar();
     renderGrid();
   };
@@ -281,11 +316,66 @@ function openCategoryDialog(cat) {
 function visibleLoras() {
   const q = query.trim().toLowerCase();
   return STATE.loras.filter((l) => {
-    if (filterCat !== "all" && !(l.categories || []).includes(filterCat)) return false;
+    if (filterCats.size) {
+      const mine = l.categories || [];
+      const pools = [...filterCats];
+      const ok =
+        filterMode === "and"
+          ? pools.every((c) => mine.includes(c)) // 交集：必须同时属于这些类别
+          : pools.some((c) => mine.includes(c)); // 并集：属于其中任意一个即可
+      if (!ok) return false;
+    }
     if (filterFolder !== "*" && (l.top_folder || "") !== filterFolder) return false;
     if (!q) return true;
-    return l.name.toLowerCase().includes(q) || (l.notes || "").toLowerCase().includes(q);
+    return (
+      l.name.toLowerCase().includes(q) ||
+      (l.alias || "").toLowerCase().includes(q) ||
+      (l.notes || "").toLowerCase().includes(q)
+    );
   });
+}
+
+// 点名称就地改名。回车 / 失焦保存，Esc 取消；留空就是还原成文件名。
+function editAlias(l, nameEl, body) {
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.className = "alias-input";
+  inp.value = l.alias || "";
+  inp.placeholder = l.display;
+  inp.maxLength = 60;
+  inp.onclick = (ev) => ev.stopPropagation();
+  nameEl.replaceWith(inp);
+  inp.focus();
+  inp.select();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const v = inp.value.trim();
+    if (save && v !== (l.alias || "")) {
+      try {
+        await api("/api/lora", { name: l.name, alias: v });
+        l.alias = v;
+        toast(v ? `已改名为「${v}」` : "已还原成文件名");
+      } catch (e) {
+        toast("保存别名失败：" + e.message, true);
+      }
+    }
+    const card = body.closest(".card");
+    if (card) card.replaceWith(loraCard(l));
+  };
+  inp.onkeydown = (ev) => {
+    ev.stopPropagation();
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      finish(true);
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      finish(false);
+    }
+  };
+  inp.onblur = () => finish(true);
 }
 
 // 加 / 减一个类别标签（不动其他标签）
@@ -401,14 +491,28 @@ function loraCard(l) {
   /* 信息 */
   const body = el("div", "body");
 
-  const name = el("div", "name");
-  name.textContent = l.display;
-  name.title = l.name;
+  const name = el("div", "name editable");
+  name.textContent = l.alias || l.display;
+  name.title = l.alias
+    ? `别名「${l.alias}」，原名 ${l.display} —— 点一下可以改`
+    : "点一下给它起个别名（只影响显示，不改动文件）";
+  name.onclick = (ev) => {
+    ev.stopPropagation();
+    editAlias(l, name, body);
+  };
   body.appendChild(name);
 
   const path = el("div", "path");
   path.textContent = l.folder || "(根目录)";
   body.appendChild(path);
+
+  // 只有设了别名才显示原名 —— 没别名时它跟上面那行一模一样，没必要重复
+  if (l.alias) {
+    const orig = el("div", "orig");
+    orig.textContent = l.display;
+    orig.title = l.name;
+    body.appendChild(orig);
+  }
 
   const rowCat = el("div", "row");
   rowCat.innerHTML = `<label>类别</label>`;
@@ -688,6 +792,15 @@ $("#search").addEventListener("input", (ev) => {
     query = v;
     renderGrid();
   }, 160);
+});
+
+// 「与 / 或」：多个类别之间取交集还是并集
+$("#filterMode").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-mode]");
+  if (!b) return;
+  filterMode = b.dataset.mode;
+  renderSidebar();
+  renderGrid();
 });
 
 $("#folderFilter").addEventListener("change", (ev) => {

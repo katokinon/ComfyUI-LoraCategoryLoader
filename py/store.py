@@ -85,6 +85,7 @@ class Library:
                         presets.append(make_preset(p.get("name", ""), p.get("text", ""), p.get("id")))
                 loras[norm(key)] = {
                     "categories": _as_list(ent.get("categories"), ent.get("category")),
+                    "alias": str(ent.get("alias") or ""),
                     "model_strength": _clamp_strength(
                         ent.get("model_strength"), DEFAULT_STRENGTH
                     ),
@@ -214,6 +215,7 @@ class Library:
         if ent is None and create:
             ent = {
                 "categories": [],
+                "alias": "",
                 "model_strength": DEFAULT_STRENGTH,
                 "notes": "",
                 "presets": [],
@@ -246,6 +248,8 @@ class Library:
             ent["categories"] = self._clean_categories([kw["category"]])
         if kw.get("model_strength") is not None:
             ent["model_strength"] = _clamp_strength(kw["model_strength"], DEFAULT_STRENGTH)
+        if kw.get("alias") is not None:
+            ent["alias"] = str(kw["alias"]).strip()[:60]
         if kw.get("notes") is not None:
             ent["notes"] = str(kw["notes"])
         if kw.get("presets") is not None:
@@ -345,6 +349,7 @@ class Library:
                     "preview": f"/lora_category_loader/api/preview?name={_q(n)}" if e.get("preview") else None,
                     "preview_ver": e.get("preview_ver") or 0,
                     "categories": self.effective_categories(n),
+                    "alias": ent.get("alias", ""),
                     "model_strength": ent.get("model_strength", DEFAULT_STRENGTH),
                     "notes": ent.get("notes", ""),
                     "presets": ent.get("presets") or [],

@@ -29,10 +29,15 @@
   <aside class="sidebar">
     <div class="side-head">
       <span>类别</span>
+      <div id="filterMode" class="seg hidden" title="选中多个类别时：取交集（与）还是并集（或）">
+        <button data-mode="and">与</button>
+        <button data-mode="or">或</button>
+      </div>
       <button id="btnNewCat" class="icon" title="新建类别">＋</button>
     </div>
     <div id="catList" class="cat-list"></div>
-    <p class="hint">一个 LoRA 可以有多个类别标签，会在每个类别里都出现，勾选状态联动。<br>类别顺序 = 提示词的拼接顺序。拖动可调整。</p>
+    <p id="filterHint" class="hint filter-hint hidden"></p>
+    <p class="hint">一个 LoRA 可以有多个类别标签，会在每个类别里都出现，勾选状态联动。<br>类别顺序 = 提示词的拼接顺序。拖动可调整。<br>类别<b>可多选</b>：选两个以上时上方出现「与 / 或」。</p>
   </aside>
 
   <main class="content">

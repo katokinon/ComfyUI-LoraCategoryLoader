@@ -126,6 +126,7 @@ def register() -> None:
             name,
             categories=body.get("categories"),
             category=body.get("category"),
+            alias=body.get("alias"),
             model_strength=body.get("model_strength"),
             notes=body.get("notes"),
             presets=body.get("presets"),

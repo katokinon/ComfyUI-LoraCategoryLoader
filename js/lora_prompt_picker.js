@@ -383,9 +383,12 @@ async function render(node, root) {
     const head = document.createElement("div");
     head.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:4px;";
 
+    // 组标题：起过别名就显示别名（管理面板里点名称可改）
     const title = document.createElement("span");
-    title.textContent = name.split("/").pop();
-    title.title = name;
+    const meta = (lib.loras || []).find((x) => x.name === name) || {};
+    const short = name.split("/").pop();
+    title.textContent = meta.alias || short;
+    title.title = meta.alias ? `${meta.alias}（原名：${short}）` : name;
     title.style.cssText = "font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
 
     const count = document.createElement("span");

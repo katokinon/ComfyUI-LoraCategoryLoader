@@ -115,7 +115,7 @@ function hideHoverPreview() {
   }
 }
 
-function showHoverPreview(url, anchor) {
+function showHoverPreview(url, anchor, caption) {
   hideHoverPreview();
   _hoverTimer = setTimeout(() => {
     const box = document.createElement("div");
@@ -128,6 +128,16 @@ function showHoverPreview(url, anchor) {
     img.src = url;
     img.style.cssText = "display:block;max-width:240px;max-height:240px;";
     box.appendChild(img);
+
+    if (caption) {
+      const cap = document.createElement("div");
+      cap.textContent = caption;
+      cap.style.cssText =
+        "max-width:240px;padding:5px 8px;font-size:11px;line-height:1.4;color:#e6e8eb;" +
+        "background:rgba(0,0,0,.35);border-top:1px solid rgba(255,255,255,.18);" +
+        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;";
+      box.appendChild(cap);
+    }
     document.body.appendChild(box);
 
     const place = () => {
@@ -805,7 +815,11 @@ function categorySection(node, st, cat, lib, filter, collapsed) {
   /* 列表 */
   const visible = all.filter((l) => {
     if (!filter) return true;
-    return l.name.toLowerCase().includes(filter) || (l.display || "").toLowerCase().includes(filter);
+    return (
+      l.name.toLowerCase().includes(filter) ||
+      (l.display || "").toLowerCase().includes(filter) ||
+      (l.alias || "").toLowerCase().includes(filter)
+    );
   });
 
   if (!all.length) {
@@ -846,8 +860,11 @@ function loraRow(node, st, cat, lora, lib, on) {
   row.appendChild(mark(`width:13px;height:13px;${inner}`, on ? "\u2713" : ""));
 
   const nm = span("flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;");
-  nm.textContent = lora.display || lora.name;
-  nm.title = lora.name;
+  // 起过别名就显示别名（管理面板里点名称可改）
+  nm.textContent = lora.alias || lora.display || lora.name;
+  nm.title = lora.alias
+    ? `${lora.alias}（原名：${lora.display || lora.name}）`
+    : lora.name;
   row.appendChild(nm);
 
   // 还挂在别的类别里 —— 勾选会联动，这里给个提示
@@ -882,7 +899,9 @@ function loraRow(node, st, cat, lora, lib, on) {
     row.appendChild(dot);
     const url =
       lora.preview + (lora.preview.includes("?") ? "&" : "?") + "v=" + (lora.preview_ver || 0);
-    row.onmouseenter = () => showHoverPreview(url, row.getBoundingClientRect());
+    // 起过别名时，浮窗里在图下面补一行原文件名；没起别名就不显示（那行会和行上的一模一样）
+    const caption = lora.alias ? lora.display || lora.name : "";
+    row.onmouseenter = () => showHoverPreview(url, row.getBoundingClientRect(), caption);
     row.onmouseleave = () => hideHoverPreview();
   }
 
@@ -980,8 +999,9 @@ function tempBlock(node, st, temp, lib, collapsed, filter) {
       )
     );
     const nm = span("flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;");
-    nm.textContent = (lora && lora.display) || String(name).split("/").pop();
-    nm.title = name;
+    nm.textContent =
+      (lora && (lora.alias || lora.display)) || String(name).split("/").pop();
+    nm.title = lora && lora.alias ? `${lora.alias}（原名：${lora.display || name}）` : name;
     row.appendChild(nm);
 
     const rm = mark(

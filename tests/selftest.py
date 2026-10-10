@@ -233,6 +233,22 @@ def main() -> int:
     root_lora = next(l for l in view["loras"] if l["name"] == "plain.safetensors")
     check("根目录 LoRA 的 top_folder 是空串", root_lora["top_folder"] == "", repr(root_lora["top_folder"]))
 
+    print("\n=== 3b. 别名 ===")
+    check("没设别名时 view 里是空串", one["alias"] == "", repr(one["alias"]))
+    lib.set_lora(target_multi, alias="  胶片质感  ")
+    view2 = lib.view(scanner.scan())
+    two = next(l for l in view2["loras"] if l["name"] == target_multi)
+    check("别名会去掉首尾空白后存在", two["alias"] == "胶片质感", repr(two["alias"]))
+    check("别名不改主键（还是相对路径）", target_multi in lib._data["loras"])
+    check("别名的显示名还是文件名", two["display"] == "film", two["display"])
+    reloaded_alias = type(lib)(lib_path)
+    check("别名能持久化", reloaded_alias.entry(target_multi).get("alias") == "胶片质感")
+
+    lib.set_lora(target_multi, alias="x" * 80)
+    check("别名长度被截到 60", len(lib.entry(target_multi)["alias"]) == 60, str(len(lib.entry(target_multi)["alias"])))
+    lib.set_lora(target_multi, alias="")
+    check("传空串就是把别名清掉", lib.entry(target_multi)["alias"] == "")
+
     print("\n=== 4. 节点 A 的动态下拉 ===")
     inputs = LoraCategoryLoader.INPUT_TYPES()
     required = inputs["required"]
