@@ -7,7 +7,13 @@
 // 下拉框干活（后端会自动回退）。
 
 import { app } from "../../scripts/app.js";
-import { invalidateLibrary, repairWidgetValues, sanitizeWidgetValues } from "./lora_prompt_picker.js";
+import {
+  hideNativeWidget,
+  invalidateLibrary,
+  repairWidgetValues,
+  sanitizeWidgetValues,
+  showNativeWidget,
+} from "./lora_prompt_picker.js";
 
 const LOADER_CLASS = "LoraCategoryLoader";
 const PICKER_CLASS = "LoraPromptPicker";
@@ -1055,10 +1061,28 @@ function tempBlock(node, st, temp, lib, collapsed, filter) {
 function resize(node) {
   const root = node.__catUI;
   if (!root) return;
-  const content = Math.min(root.scrollHeight, MAX_PANEL_HEIGHT + 40);
+
+  const measured = root.scrollHeight;
+  // DOM 还没完成布局 —— Nodes 2.0 里节点是 Vue 异步挂上去的，这一刻量到的可能是 0。
+  // 拿 0 去算会把节点高度设成 58px，面板直接变成一条缝。等下一帧再量。
+  if (!measured) {
+    if (!node.__sizeRetry) {
+      node.__sizeRetry = requestAnimationFrame(() => {
+        node.__sizeRetry = 0;
+        resize(node);
+      });
+    }
+    return;
+  }
+
+  const content = Math.min(measured, MAX_PANEL_HEIGHT + 40);
   const needed = content + 58;
   const width = Math.max(node.size?.[0] || 0, 330);
-  if (!node.size || node.size[1] < needed) {
+  // 只往大里撑、绝不往回缩 —— 用户手动拉过的高度要留着
+  if (!node.size || node.size[1] + 4 < needed) {
+    // 同一个目标高度不重复设：Nodes 2.0 里节点高度也参与 DOM 布局，反复 setSize 会抖
+    if (node.__lastSetH === needed) return;
+    node.__lastSetH = needed;
     node.setSize([width, needed]);
     app.graph?.setDirtyCanvas(true, true);
   }
@@ -1068,19 +1092,20 @@ function resize(node) {
 /* 装上界面                                                            */
 /* ------------------------------------------------------------------ */
 
+// 把原生 widget 从界面上藏起来（保留值，降级通路要用）—— 实现在 picker 里，两个节点共用同一份，
+// 免得一边改了另一边忘改（`selection` 在 2.0 下露出来就是这么漏的）。
 function installUI(node) {
   // 隐藏原生下拉框 + selection（保留它们作为降级通路）
   for (const w of node.widgets || []) {
     if (w.name === SEL_WIDGET) {
-      w.computeSize = () => [0, -4];
+      hideNativeWidget(w);
     } else if (typeof w.name === "string" && w.name.startsWith(WIDGET_PREFIX)) {
-      w.computeSize = () => [0, -4];
-      w.hidden = true;
+      hideNativeWidget(w);
     }
   }
 
   const root = div(
-    "display:flex;flex-direction:column;gap:2px;padding:2px;font-size:12px;color:inherit;" +
+    "box-sizing:border-box;display:flex;flex-direction:column;gap:2px;padding:2px;font-size:12px;color:inherit;" +
       // 拖拽是靠指针事件做的，不禁用文字选择的话拖动过程中会把 LoRA 名字刷成选中态
       "user-select:none;-webkit-user-select:none;" +
       `max-height:${MAX_PANEL_HEIGHT}px;overflow-y:auto;overflow-x:hidden;`
@@ -1106,14 +1131,16 @@ function installUI(node) {
   root.addEventListener("scroll", hideHoverPreview, { passive: true });
   root.addEventListener("mouseleave", hideHoverPreview);
   render(node);
+  // Nodes 2.0 的 DOM 挂载是异步的，首帧量高度可能还是 0 —— 补量一次
+  requestAnimationFrame(() => resize(node));
 }
 
 function restoreNative(node) {
   for (const w of node.widgets || []) {
-    if (typeof w.name === "string" && w.name.startsWith(WIDGET_PREFIX)) {
-      delete w.hidden;
-      delete w.computeSize;
-    }
+    const hideable =
+      w.name === SEL_WIDGET ||
+      (typeof w.name === "string" && w.name.startsWith(WIDGET_PREFIX));
+    if (hideable) showNativeWidget(w);
   }
   const root = div("font-size:11px;opacity:.7;line-height:1.5;padding:4px 2px;");
   root.textContent = "折叠面板无法在当前前端渲染，已回退到下面的下拉框（功能完整，只是没有多选和临时分类）。";

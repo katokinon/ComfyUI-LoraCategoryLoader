@@ -478,9 +478,25 @@ async function render(node, root) {
 function resize(node) {
   const root = node.__pickerUI;
   if (!root) return;
-  const needed = root.scrollHeight + 64;
+
+  const measured = root.scrollHeight;
+  // Nodes 2.0 的 DOM 是异步挂上去的，首帧可能量到 0 —— 拿 0 算会把节点压成一条缝
+  if (!measured) {
+    if (!node.__sizeRetry) {
+      node.__sizeRetry = requestAnimationFrame(() => {
+        node.__sizeRetry = 0;
+        resize(node);
+      });
+    }
+    return;
+  }
+
+  const needed = measured + 64;
   const width = Math.max(node.size?.[0] || 0, 320);
-  if (!node.size || node.size[1] < needed) {
+  // 只往大里撑、不往回缩；同一高度不重复设，免得 2.0 下反复 setSize 抖动
+  if (!node.size || node.size[1] + 4 < needed) {
+    if (node.__lastSetH === needed) return;
+    node.__lastSetH = needed;
     node.setSize([width, needed]);
     app.graph?.setDirtyCanvas(true, true);
   }
@@ -490,15 +506,37 @@ function resize(node) {
 /* 注册                                                                */
 /* ------------------------------------------------------------------ */
 
+// 把原生 widget 从界面上藏起来，但**保留它的值** —— 它是后端读状态的入口，也要参与序列化。
+// 两种前端压住的方式不一样，必须一起写：
+//   · 旧画布（LiteGraph）看 computeSize，高度返回 0 就不画；
+//   · Nodes 2.0（Vue 渲染）不看 computeSize，`hidden` 也未必被认，
+//     得用 canvasOnly 明确告诉它「这个别用 Vue 渲染」。
+// 少写其中任何一条，2.0 下那个 selection 输入框就会露出来（显示成 `{}`）。
+export function hideNativeWidget(w) {
+  w.computeSize = () => [0, -4];
+  w.hidden = true;
+  if (w.options && typeof w.options === "object") {
+    w.options.canvasOnly = true;
+  } else {
+    w.options = { canvasOnly: true };
+  }
+}
+
+// 反过来：万一自定义界面挂不出来，得把 selection 放出来 —— 藏着的状态容器 = 用户完全没法操作。
+export function showNativeWidget(w) {
+  delete w.hidden;
+  delete w.computeSize;
+  if (w.options && "canvasOnly" in w.options) delete w.options.canvasOnly;
+}
+
 function setupPicker(node) {
   // 隐藏后端用来接收状态的 selection widget
   const sel = selWidget(node);
-  if (sel) {
-    sel.computeSize = () => [0, -4];
-  }
+  if (sel) hideNativeWidget(sel);
 
   const root = document.createElement("div");
-  root.style.cssText = "display:flex;flex-direction:column;gap:2px;padding:2px 0;color:inherit;";
+  root.style.cssText =
+    "box-sizing:border-box;display:flex;flex-direction:column;gap:2px;padding:2px 0;color:inherit;";
   node.__pickerUI = root;
 
   if (typeof node.addDOMWidget === "function") {
@@ -507,10 +545,12 @@ function setupPicker(node) {
     } catch (err) {
       console.warn("[LoRA分类加载] 创建打钩界面失败，可能是新版前端不兼容：", err);
       root.appendChild(hint("界面渲染失败，请退回旧版画布（legacy canvas）后重试。"));
+      if (sel) showNativeWidget(sel); // 界面没了就把状态容器放出来，至少还能手改
     }
   } else {
     console.warn("[LoRA分类加载] 当前前端不支持 addDOMWidget，无法渲染打钩界面。");
     root.appendChild(hint("当前前端不支持自定义界面，请退回旧版画布（legacy canvas）。"));
+    if (sel) showNativeWidget(sel);
   }
 
   node.__refreshPicker = () => {
@@ -522,6 +562,8 @@ function setupPicker(node) {
   };
 
   node.__refreshPicker();
+  // Nodes 2.0 的 DOM 挂载是异步的，首帧量高度可能还是 0 —— 补量一次
+  requestAnimationFrame(() => resize(node));
 }
 
 app.registerExtension({
