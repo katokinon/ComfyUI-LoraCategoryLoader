@@ -25,8 +25,10 @@ DEFAULT_CATEGORY_MODE = "multi"
 CATEGORY_MODES = ("exclusive", "multi")
 
 # LoRA 强度的默认值。只作用于 UNET 侧，所以只有一个值。
+# 下限是负的：Slider 类 LoRA（风格滑杆、细节增减）本来就是靠负值往反方向推。
 DEFAULT_STRENGTH = 1.0
-MAX_STRENGTH = 4.0
+MIN_STRENGTH = -10.0
+MAX_STRENGTH = 10.0
 
 
 def new_id(prefix: str = "c") -> str:
@@ -403,7 +405,7 @@ def _clamp_strength(value, fallback: float) -> float:
         v = float(value)
     except (TypeError, ValueError):
         return fallback
-    return max(0.0, min(MAX_STRENGTH, v))
+    return max(MIN_STRENGTH, min(MAX_STRENGTH, v))
 
 
 def top_folder(name: str) -> str:

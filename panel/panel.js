@@ -570,10 +570,10 @@ function loraCard(l) {
   const mIn = el("input");
   mIn.type = "number";
   mIn.step = "0.05";
-  mIn.min = "0";
-  mIn.max = "4";
+  mIn.min = "-10";
+  mIn.max = "10";
   mIn.value = l.model_strength;
-  mIn.title = "LoRA 强度（新建/未改过的默认是 1）";
+  mIn.title = "LoRA 强度（新建/未改过的默认是 1；Slider 类 LoRA 可以填负数）";
   mIn.onchange = async () => {
     const ms = parseFloat(mIn.value);
     if (Number.isNaN(ms)) return;

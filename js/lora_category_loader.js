@@ -28,6 +28,13 @@ const MAX_PANEL_HEIGHT = 420;
 const LINE = "rgba(128,128,128,.28)";
 const LINE_SOFT = "rgba(128,128,128,.18)";
 const FILL = "rgba(128,128,128,.10)";
+const NEG_FG = "#f0a04b";               // 负强度的暖色，亮/暗主题下都看得清
+const NEG_LINE = "rgba(240,160,75,.55)";
+
+// 强度范围。上限 10 是给滑杆类 LoRA 留的余量（常见的 -5~5 / -10~10 都能覆盖），
+// 同时挡住手滑打成 1000 这种笔误。
+const STR_MIN = -10;
+const STR_MAX = 10;
 
 /* ------------------------------------------------------------------ */
 /* 预设库                                                              */
@@ -539,7 +546,16 @@ function setStrength(node, st, name, value) {
 
 function clampStrength(v) {
   if (!Number.isFinite(v)) return 1;
-  return Math.max(0, Math.min(4, Math.round(v * 100) / 100));
+  // 下限不能是 0：Slider 类 LoRA（风格滑杆、细节增减）就是靠负值往反方向推的。
+  // 尾随的 `+ 0` 是把 -0 归一成 0，否则拖回 0 会显示成 "-0.00"。
+  return Math.max(STR_MIN, Math.min(STR_MAX, Math.round(v * 100) / 100)) + 0;
+}
+
+// 负值给个暖色提示：一屏几十行里，"−2.50" 和 "2.50" 不靠颜色几乎看不出来。
+function paintStrength(inp) {
+  const neg = parseFloat(inp.value) < 0;
+  inp.style.color = neg ? NEG_FG : "inherit";
+  inp.style.borderColor = neg ? NEG_LINE : LINE;
 }
 
 // 强度控件：一个够大的数字框 + 按住左右拖。
@@ -554,10 +570,12 @@ function strengthBox(node, st, lora) {
   const inp = document.createElement("input");
   inp.type = "number";
   inp.step = "0.05";
-  inp.min = "0";
-  inp.max = "4";
+  inp.min = String(STR_MIN);
+  inp.max = String(STR_MAX);
   inp.value = shown;
-  inp.title = "LoRA 强度：可以直接输入，也可以按住左右拖动（只影响当前工作流）";
+  inp.title =
+    `LoRA 强度：可以直接输入，也可以按住左右拖动（${STR_MIN} ~ ${STR_MAX}，` +
+    "滑杆类 LoRA 可以填负数往反方向推）。只影响当前工作流";
   // 宽度用 flex-basis 一起定住：ComfyUI 的全局样式里有 input{width:100%} 之类的规则，
   // 只写 width 会被压回去，框太小就不好点、也不好拖。
   inp.style.cssText =
@@ -566,10 +584,15 @@ function strengthBox(node, st, lora) {
     // 输入框里还是得能选文字、能打字，把继承下来的 user-select:none 顶回去
     "user-select:text;-webkit-user-select:text;" +
     "background:rgba(128,128,128,.12);border:1px solid " + LINE + ";color:inherit;outline:none;";
+  paintStrength(inp);
   inp.onclick = (ev) => ev.stopPropagation();
   inp.onchange = () => {
     const v = parseFloat(inp.value);
-    if (!Number.isNaN(v)) setStrength(node, st, lora.name, clampStrength(v));
+    if (Number.isNaN(v)) return;
+    const fixed = clampStrength(v);
+    inp.value = fixed; // 输入 1.234 / -0 之类回填成规范数值
+    paintStrength(inp);
+    setStrength(node, st, lora.name, fixed);
   };
 
   let drag = null;
@@ -594,6 +617,7 @@ function strengthBox(node, st, lora) {
     ev.preventDefault();
     // 横向 100px = 1.0 强度
     inp.value = clampStrength(drag.start + dx * 0.01).toFixed(2);
+    paintStrength(inp);
   };
   const finish = () => {
     if (!drag) return;
@@ -601,7 +625,12 @@ function strengthBox(node, st, lora) {
     drag = null;
     if (!moved) return;
     const v = parseFloat(inp.value);
-    if (!Number.isNaN(v)) setStrength(node, st, lora.name, clampStrength(v));
+    if (!Number.isNaN(v)) {
+      const fixed = clampStrength(v);
+      inp.value = fixed.toFixed(2);
+      paintStrength(inp);
+      setStrength(node, st, lora.name, fixed);
+    }
   };
   inp.onpointerup = finish;
   inp.onpointercancel = finish;
