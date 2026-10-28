@@ -94,6 +94,32 @@ const button = (text, title, onClick, css = "") => {
   return b;
 };
 
+// 工具条第二行用的小按钮：平时无底色、悬停才亮。
+// 一排实心块会把面板压得很重，这些是低频操作，弱化处理更清爽。
+const smallAction = (text, title, onClick) => {
+  const b = document.createElement("button");
+  b.textContent = text;
+  if (title) b.title = title;
+  b.style.cssText =
+    "flex:none;font-size:10.5px;line-height:1;padding:4px 8px;border-radius:5px;" +
+    "background:transparent;border:1px solid rgba(128,128,128,.26);color:inherit;" +
+    "opacity:.62;cursor:pointer;transition:opacity .12s,background .12s;";
+  b.onmouseenter = () => {
+    b.style.opacity = "1";
+    b.style.background = "rgba(128,128,128,.14)";
+  };
+  b.onmouseleave = () => {
+    b.style.opacity = ".62";
+    b.style.background = "transparent";
+  };
+  b.onclick = (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    onClick();
+  };
+  return b;
+};
+
 function mark(css, text) {
   return span(
     "flex:none;display:inline-flex;align-items:center;justify-content:center;" +
@@ -170,7 +196,8 @@ function showHoverPreview(url, anchor, caption) {
 /* ------------------------------------------------------------------ */
 
 function emptyState() {
-  return { ui: true, v: 2, on: [], temps: [], strength: {}, folder: "" };
+  // dense：行距。true = 紧凑（默认），false = 宽松（行更高、更好点）
+  return { ui: true, v: 2, on: [], temps: [], strength: {}, folder: "", dense: true };
 }
 
 function selWidget(node) {
@@ -184,6 +211,8 @@ function normalizeState(d) {
   st.temps = Array.isArray(d.temps) ? d.temps.filter((t) => t && typeof t === "object") : [];
   st.strength = d.strength && typeof d.strength === "object" ? d.strength : {};
   st.folder = typeof d.folder === "string" ? d.folder : "";
+  // 只有明确存了 false 才是宽松；老工作流没这个字段 → 保持原来的紧凑
+  st.dense = d.dense !== false;
 
   const push = (n) => {
     if (typeof n === "string" && n && !st.on.includes(n)) st.on.push(n);
@@ -704,11 +733,30 @@ async function render(node) {
     bar.appendChild(pick);
   }
 
-  const summary = span("font-size:11px;opacity:.65;flex:none;", `启用 ${enabledCount(st)}`);
-  const clearBtn = button("全清", "清空所有已启用的 LoRA", () => clearAll(node, st));
-  const panelBtn = button("管理面板", "打开 LoRA 分类管理面板", () => window.open(PANEL_URL, "_blank"));
-  bar.append(summary, clearBtn, panelBtn);
   root.appendChild(bar);
+
+  /* ---- 第二行：状态 + 低频操作（小字、弱化，别跟搜索框抢视线） ---- */
+  const statusBar = div("display:flex;align-items:center;gap:5px;flex:none;padding:2px 1px 6px;");
+  const dense = st.dense !== false;
+  statusBar.append(
+    span(
+      "font-size:10.5px;opacity:.5;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+      `启用 ${enabledCount(st)} / ${(lib.loras || []).length}`
+    ),
+    smallAction(
+      dense ? "紧凑" : "宽松",
+      dense
+        ? "行距：紧凑（点一下换成宽松，行更高更好点）"
+        : "行距：宽松（点一下换回紧凑，一屏放得更多）",
+      () => {
+        st.dense = !dense;
+        writeState(node, st);
+      }
+    ),
+    smallAction("全清", "取消所有已启用的 LoRA", () => clearAll(node, st)),
+    smallAction("面板", "打开 LoRA 分类管理面板", () => window.open(PANEL_URL, "_blank"))
+  );
+  root.appendChild(statusBar);
 
   /* ---- 没接 model：明确告诉用户「现在不会真的加载」 ---- */
   const missingInputs = missingSourceInputs(node);
@@ -872,13 +920,27 @@ function categorySection(node, st, cat, lib, filter, collapsed) {
 
 function loraRow(node, st, cat, lora, lib, on) {
   const isMulti = cat.mode === "multi";
+  const dense = st.dense !== false;
+  // 行距两档：紧凑 3px（一屏塞更多）/ 宽松 7px（行更高，指针不容易点错）
   const row = div(
-    "display:flex;align-items:center;gap:6px;padding:3px 8px;" +
-      "user-select:none;-webkit-user-select:none;" +
+    "display:flex;align-items:center;gap:6px;padding:" +
+      (dense ? "3px 8px" : "7px 9px") +
+      ";" +
+      "user-select:none;-webkit-user-select:none;border-radius:5px;" +
+      // 光标用箭头而不是抓手：抓手是「拖这块东西」的语义，会让人以为整行都是拖拽区，反而看不出点在哪
+      "cursor:default;" +
       (on ? "background:rgba(90,150,255,.10);" : "")
   );
   row.dataset.lora = lora.name;
-  row.style.cursor = "grab";
+  // 用悬停高亮来指示「点这里」——比换光标更直观。用 pointerenter 避开下面预览图的 mouseenter
+  if (!on) {
+    row.onpointerenter = () => {
+      row.style.background = "rgba(128,128,128,.14)";
+    };
+    row.onpointerleave = () => {
+      row.style.background = "";
+    };
+  }
 
   const box = isMulti ? "border-radius:4px;" : "border-radius:50%;";
   const inner = on
@@ -1013,10 +1075,21 @@ function tempBlock(node, st, temp, lib, collapsed, filter) {
     const lora = (lib.loras || []).find((l) => l.name === name);
     const on = (st.on || []).includes(name);
     const row = div(
-      "display:flex;align-items:center;gap:6px;padding:3px 8px;cursor:pointer;" +
+      "display:flex;align-items:center;gap:6px;padding:" +
+        (st.dense !== false ? "3px 8px" : "7px 9px") +
+        ";" +
+        "border-radius:5px;cursor:default;" +
         "user-select:none;-webkit-user-select:none;" +
         (on ? "background:rgba(90,150,255,.10);" : "")
     );
+    if (!on) {
+      row.onpointerenter = () => {
+        row.style.background = "rgba(128,128,128,.14)";
+      };
+      row.onpointerleave = () => {
+        row.style.background = "";
+      };
+    }
     row.appendChild(
       mark(
         `width:13px;height:13px;border-radius:4px;${

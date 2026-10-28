@@ -22,6 +22,9 @@ library.json
 .coverage
 htmlcov/
 
+# ---- 打包产物（comfy node pack / publish 生成，不进仓库）----
+node.zip
+
 # ---- 编辑器 / 系统 ----
 .vscode/
 .idea/
